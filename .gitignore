@@ -27,3 +27,13 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Python distribution
+dist/
+build/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/

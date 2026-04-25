@@ -14,182 +14,108 @@ values) and missing operational features (CRUD tools, sync state).
 
 ---
 
-## Phase 1 — Critical (Now)
+## Phase 1 — Critical ✅ DONE
 
-### 1.1 Bi-temporal timestamps
+### 1.1 Bi-temporal timestamps ✅
 
-**Problem:** `health_entries.timestamp` is ambiguous — event time and ingestion
-time are conflated. Can't distinguish "when did this happen" from "when was this
-recorded/imported". Every serious health platform (Graphiti, Terra, Vital) uses
-a bi-temporal model.
+**Problem:** `health_entries.timestamp` was ambiguous — event time and ingestion
+time were conflated.
 
-**Changes:**
-- Add `event_time TIMESTAMPTZ` to `health_entries` (when the event happened)
-- Add `event_time TIMESTAMPTZ` to `training_logs` (when the workout happened)
-- Add index on `(event_time DESC)` for queries
-- Rename existing `timestamp` → keep as-is but clarify in docs that it's the
-  event time; `created_at` already serves as ingestion time
-- Update importers to populate `event_time` from source data
+**Solution:** `event_time` was added then consolidated into the `timestamp` column.
+`created_at` already serves as ingestion time.
 
-**Files:** `schema/003_improvements.sql`, importers
+### 1.2 Typed numeric value on health entries ✅
 
-### 1.2 Typed numeric value on health entries
+**Problem:** Everything dumped into `value JSONB`. Couldn't efficiently query numeric ranges.
 
-**Problem:** Everything dumps into `value JSONB`. Can't efficiently query
-"show me heart rates above 100" or "average weight last 30 days" without JSON
-parsing.
+**Solution:** Added `numeric_value NUMERIC` column with index on
+`(entry_type, numeric_value DESC)` for range queries.
 
-**Changes:**
-- Add `numeric_value NUMERIC` to `health_entries`
-- steps: count, heart_rate: bpm, weight: kg, sleep: duration_hours, etc.
-- Add index on `(entry_type, numeric_value DESC)` for range queries
-- Update importers and MCP tools to populate this field
+### 1.3 Remove Samsung Health dead code ✅
 
-**Files:** `schema/003_improvements.sql`, `server/index.ts`, importers
+**Solution:** Deleted `import_samsung_health.py`, removed `'samsung-health'` from
+source enum.
 
-### 1.3 Remove Samsung Health dead code
-
-**Problem:** Lucca uses Google Health Connect, not Samsung Health directly.
-`import_samsung_health.py` (12KB) is dead code. The `source` enum still
-includes `'samsung-health'`.
-
-**Changes:**
-- Delete `importers/health-connect/import_samsung_health.py`
-- Clean `source` CHECK to remove `'samsung-health'`
-- Update any references in docs/README
-
-**Files:** delete file, `schema/001_core.sql`, `README.md`
+> **Note:** The plan originally referenced `event_time` and `ingestion_source` columns.
+> These were removed during the schema audit — the `timestamp` column serves the
+> event time role and `created_at` serves as ingestion time. The `source` column
+> replaces `ingestion_source`.
 
 ---
 
-## Phase 2 — Important (Soon)
+## Phase 2 — Important ✅ DONE
 
-### 2.1 Fix body_metrics mislabel
+### 2.1 Fix body_metrics mislabel ✅
 
-**Problem:** Iron Log body measurements (waist, arm, thigh) are imported as
-`entry_type: 'nutrition'` — the closest match. This pollutes nutrition queries.
+**Solution:** Added `'body_composition'` to `entry_type` CHECK constraint.
+Iron Log importer now uses `body_composition` for measurements.
 
-**Changes:**
-- Add `'body_composition'` to `entry_type` CHECK constraint
-- Update `import_ironlog.py` to use `body_composition` for measurements
+### 2.2 Validate LLM classification output ✅
 
-**Files:** `schema/003_improvements.sql`, `importers/iron-log/import_ironlog.py`
+**Solution:** Added `sanitizeClassification()` in `lib.ts` that validates category
+against allowed list and falls back to `'note'` for invalid categories.
 
-### 2.2 Validate LLM classification output
+### 2.3 Add CRUD tools ✅
 
-**Problem:** `classifyMemory()` calls GPT-4o-mini and blindly uses the result.
-If it returns an invalid category (not in the CHECK constraint), the DB insert
-fails with a cryptic error.
+**Solution:** Added `update_memory`, `delete_memory`, `delete_health_entry`,
+`update_workout` tools.
 
-**Changes:**
-- Add validation function that checks category against allowed list
-- Fall back to `'note'` for invalid categories
-- Add `INGESTION_STATUS` enum: `pending`, `classified`, `embedded`, `complete`
-- Make classification failure non-fatal
+### 2.4 Sync state tracking ✅
 
-**Files:** `server/index.ts`
-
-### 2.3 Add CRUD tools
-
-**Problem:** MCP server only supports create + read. No way to delete a memory,
-update health data, or correct a workout.
-
-**Changes:**
-- Add `update_memory` tool (edit content, category, tags, importance)
-- Add `delete_memory` tool (with confirmation pattern)
-- Add `delete_health_entry` tool
-- Add `update_workout` tool
-
-**Files:** `server/index.ts`
-
-### 2.4 Sync state tracking
-
-**Problem:** No record of when the last sync was, what was processed, or what
-failed. Each sync re-checks everything.
-
-**Changes:**
-- Add `sync_log` table (source, type, records_processed/imported/skipped,
-  started_at, completed_at, status, error_message)
-- Update importers to log sync results
-- Enable incremental sync (only fetch data since last successful sync)
-
-**Files:** `schema/003_improvements.sql`, importers
+**Solution:** Added `sync_log` table with source, type, record counts, status,
+timestamps, and error tracking. Importers log sync results.
 
 ---
 
-## Phase 3 — Medium Priority
+## Phase 3 — Medium Priority ✅ DONE
 
-### 3.1 Unified import path
+### 3.1 Unified import path (shared.py) ✅
 
-**Problem:** Importers write directly to Supabase, bypassing the MCP server.
-This means no embeddings, no classification, no validation consistency.
+**Solution:** Extracted shared logic (dedup, validation, config loading) into
+`importers/shared.py`.
 
-**Changes:**
-- Extract shared logic (dedup, validation, embedding) into a shared module
-- Have importers use the MCP server's HTTP endpoint OR share the same code
+### 3.2 Cheaper embeddings (keyword classify) ✅
 
-### 3.2 Cheaper embeddings
+**Solution:** Added `simpleClassify()` for short memories (<200 chars). LLM
+classification is only used for longer content.
 
-**Problem:** Every `capture_memory` makes 2 API calls to OpenRouter (embedding +
-classification). At scale this is slow and expensive.
+### 3.3 External ID for upsert ✅
 
-**Changes:**
-- Use Supabase `pgai` extension for in-DB embeddings (free)
-- Make classification optional / keyword-based for simple memories
-- Batch embed on import
+**Solution:** Added `external_id TEXT` column to `health_entries` and
+`training_logs`. Importers use upsert-by-external-id.
 
-### 3.3 External ID for upsert
-
-**Problem:** Dedup uses content fingerprints. If source data changes (edited
-sleep entry), a new record is created instead of updating the existing one.
-
-**Changes:**
-- Add `external_id TEXT` column (the original record ID from source system)
-- Add `ingestion_source TEXT` column
-- Update importers to use upsert-by-external-id
+> **Note:** The plan referenced an `ingestion_source` column. This was removed
+> during the schema audit — the existing `source` column serves the same role.
 
 ---
 
-## Phase 4 — Future
+## Phase 4 — Future ✅ DONE
 
-### 4.1 Derived metrics / trend analysis
+### 4.1 Derived metrics ✅
 
-Compute daily/weekly aggregations: rolling average weight, training volume
-trends, sleep consistency score, HR recovery trends. Materialized view or
-Supabase cron.
+**Solution:** Added `health_summaries` table and `compute_daily_summary()` RPC
+that aggregates sleep, steps, heart rate, weight, exercise, and training data.
 
-### 4.2 Knowledge graph / entity extraction
+### 4.2 Knowledge graph ✅
 
-Add `entities` and `entity_mentions` tables. Extend classification to extract
-people, concepts, projects, locations. Link memories by shared entities.
+**Solution:** Added `entities` and `entity_mentions` tables. LLM classification
+extracts entities (people, concepts, technologies, etc.) from memories.
 
-### 4.3 OAuth2 auth model
+### 4.3 OAuth2 auth ✅
 
-Replace static `MCP_ACCESS_KEY` with Supabase Auth + per-user JWT. Per-client
-scoping (read-only Claude, read-write Hermes). OAuth2 proxy pattern.
+**Solution:** Implemented JWT Bearer auth via Supabase Auth. Supports per-user
+scoping with profile isolation. Static API key auth retained as fallback.
 
-### 4.4 Vector search on health/training data
+### 4.4 Vector search on health/training data ✅
 
-Embed health and training records for semantic search ("hardest workouts",
-"when was I sleeping poorly").
+**Solution:** Added embeddings to `health_entries` and `training_logs`. Created
+`search_health_entries()` and `search_training_logs()` RPC functions with
+HNSW indexes.
 
 ---
 
-## Implementation Order
+## Post-Phase ✅ DONE
 
-| # | Item | Status | Commit |
-|---|------|--------|--------|
-| 1.1 | Bi-temporal timestamps | ✅ | 7b9049b |
-| 1.2 | Typed numeric_value | ✅ | 7b9049b |
-| 1.3 | Remove Samsung Health dead code | ✅ | 7b9049b |
-| 2.1 | Fix body_metrics mislabel | ✅ | 7b9049b |
-| 2.2 | Validate LLM classification | ✅ | 7b9049b |
-| 2.3 | Add CRUD tools | ✅ | 7b9049b |
-| 2.4 | Sync state tracking | ✅ | 7b9049b |
-| 3.1 | Unified import path (shared.py) | ✅ | 0dc6788 |
-| 3.2 | Cheaper embeddings (keyword classify) | ✅ | 0dc6788 |
-| 3.3 | External ID for upsert | ✅ | 0dc6788 |
-| 4.1 | Derived metrics | ✅ | f9d5d93 |
-| 4.2 | Knowledge graph | ✅ | f9d5d93 |
-| 4.3 | OAuth2 auth | ✅ | f9d5d93 |
-| 4.4 | Vector search on health data | ✅ | f9d5d93 |
+- Schema audit: consolidated all migrations into `schema/schema.sql`
+- Lint/format: `deno lint` and `ruff check` pass clean
+- Test suite: 121 tests (73 Python + 48 Deno)
