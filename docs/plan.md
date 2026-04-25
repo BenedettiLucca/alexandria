@@ -177,19 +177,19 @@ Embed health and training records for semantic search ("hardest workouts",
 
 ## Implementation Order
 
-| # | Item | Status |
-|---|------|--------|
-| 1.1 | Bi-temporal timestamps | ⬜ |
-| 1.2 | Typed numeric_value | ⬜ |
-| 1.3 | Remove Samsung Health dead code | ⬜ |
-| 2.1 | Fix body_metrics mislabel | ⬜ |
-| 2.2 | Validate LLM classification | ⬜ |
-| 2.3 | Add CRUD tools | ⬜ |
-| 2.4 | Sync state tracking | ⬜ |
-| 3.1 | Unified import path | ⬜ |
-| 3.2 | Cheaper embeddings | ⬜ |
-| 3.3 | External ID for upsert | ⬜ |
-| 4.1 | Derived metrics | ⬜ |
-| 4.2 | Knowledge graph | ⬜ |
-| 4.3 | OAuth2 auth | ⬜ |
-| 4.4 | Vector search on health data | ⬜ |
+| # | Item | Status | Commit |
+|---|------|--------|--------|
+| 1.1 | Bi-temporal timestamps | ✅ | 7b9049b |
+| 1.2 | Typed numeric_value | ✅ | 7b9049b |
+| 1.3 | Remove Samsung Health dead code | ✅ | 7b9049b |
+| 2.1 | Fix body_metrics mislabel | ✅ | 7b9049b |
+| 2.2 | Validate LLM classification | ✅ | 7b9049b |
+| 2.3 | Add CRUD tools | ✅ | 7b9049b |
+| 2.4 | Sync state tracking | ✅ | 7b9049b |
+| 3.1 | Unified import path (shared.py) | ✅ | 0dc6788 |
+| 3.2 | Cheaper embeddings (keyword classify) | ✅ | 0dc6788 |
+| 3.3 | External ID for upsert | ✅ | 0dc6788 |
+| 4.1 | Derived metrics | ⬜ | |
+| 4.2 | Knowledge graph | ⬜ | |
+| 4.3 | OAuth2 auth | ⬜ | |
+| 4.4 | Vector search on health data | ⬜ | |

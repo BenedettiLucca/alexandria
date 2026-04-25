@@ -15,6 +15,24 @@ const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+type AuthContext = {
+  method: "jwt" | "key";
+  userId: string;
+  email?: string;
+};
+
+function getUserClient(auth?: AuthContext) {
+  if (auth?.method === "jwt") {
+    return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      global: {
+        headers: { Authorization: `Bearer ${auth.userId}` },
+      },
+      auth: { persistSession: false },
+    });
+  }
+  return supabase;
+}
+
 const VALID_CATEGORIES = [
   "note", "idea", "decision", "observation",
   "reference", "task", "person", "recipe",
@@ -118,6 +136,7 @@ async function classifyMemory(text: string): Promise<Record<string, unknown>> {
 - "dates_mentioned": array of dates as YYYY-MM-DD (empty if none)
 - "importance": 1-10 (1=trivial, 10=critical life event)
 - "title": short descriptive title (max 60 chars)
+- "entities": array of objects with "name" (string), "type" (one of: person, project, concept, location, technology, organization, event, other), "context" (the sentence or phrase where the entity was mentioned)
 Only extract what is explicitly present.`,
           },
           { role: "user", content: text },
@@ -133,12 +152,137 @@ Only extract what is explicitly present.`,
   }
 }
 
+function recordToText(type: string, record: Record<string, unknown>): string {
+  const date = record.event_time
+    ? new Date(record.event_time as string).toLocaleDateString()
+    : record.timestamp
+      ? new Date(record.timestamp as string).toLocaleDateString()
+      : "unknown date";
+  const v = record.value as Record<string, unknown> | undefined;
+
+  switch (type) {
+    case "steps":
+      return `On ${date}, walked ${formatNum(record.numeric_value)} steps${record.duration_s ? ` over ${Math.round((record.duration_s as number) / 60)} minutes` : ""}`;
+    case "sleep": {
+      const hrs = record.numeric_value || v?.duration_hours;
+      const bed = v?.bed_time ? ` from ${v.bed_time}` : "";
+      const wake = v?.wake_time ? ` to ${v.wake_time}` : "";
+      return `On ${date}, slept ${hrs} hours${bed}${wake}`;
+    }
+    case "heart_rate":
+      return `Heart rate of ${formatNum(record.numeric_value)} bpm at ${new Date((record.event_time || record.timestamp) as string).toLocaleString()}`;
+    case "weight":
+      return `Weight: ${formatNum(record.numeric_value)} kg on ${date}`;
+    case "blood_pressure": {
+      const sys = v?.systolic;
+      const dia = v?.diastolic;
+      return `Blood pressure ${sys}/${dia} mmHg on ${date}`;
+    }
+    case "water":
+      return `Drank ${formatNum(record.numeric_value)} ml of water on ${date}`;
+    case "nutrition":
+      return `Nutrition log on ${date}: ${JSON.stringify(v)}`;
+    case "stress":
+      return `Stress level ${formatNum(record.numeric_value)} on ${date}`;
+    case "cycle":
+      return `Cycle data on ${date}: ${JSON.stringify(v)}`;
+    case "body_composition":
+      return `Body composition on ${date}: ${JSON.stringify(v)}`;
+    default: {
+      const parts = [`${type} on ${date}`];
+      if (record.numeric_value != null) parts.push(`value: ${record.numeric_value}`);
+      if (record.duration_s) parts.push(`duration: ${Math.round((record.duration_s as number) / 60)}min`);
+      if (v) parts.push(`data: ${JSON.stringify(v)}`);
+      return parts.join(", ");
+    }
+  }
+}
+
+function workoutToText(record: Record<string, unknown>): string {
+  const date = record.event_time
+    ? new Date(record.event_time as string).toLocaleDateString()
+    : record.workout_date as string || "unknown date";
+  const name = record.name as string || "Workout";
+  const type = record.workout_type as string || "other";
+  const exercises = record.exercises as Array<Record<string, unknown>> | undefined;
+
+  const parts = [`${type} workout '${name}' on ${date}`];
+  if (exercises?.length) {
+    const exStr = exercises.map((e) => {
+      const sets = e.sets != null ? `${e.sets}x` : "";
+      const reps = e.reps != null ? `${e.reps}` : "";
+      const weight = e.weight_kg != null ? `@${e.weight_kg}kg` : "";
+      return `${e.name} ${sets}${reps}${weight}`.trim();
+    }).join(", ");
+    parts.push(exStr);
+  }
+  if (record.volume_kg != null) parts.push(`total volume ${record.volume_kg}kg`);
+  if (record.rpe != null) parts.push(`RPE ${record.rpe}`);
+  if (record.duration_s) parts.push(`duration ${Math.round((record.duration_s as number) / 60)}min`);
+
+  return parts.join(": ") + (exercises?.length ? "" : "");
+}
+
+function formatNum(n: unknown): string {
+  if (n == null) return "0";
+  return Number(n).toLocaleString();
+}
+
 function err(msg: string) {
   return { content: [{ type: "text" as const, text: msg }], isError: true };
 }
 
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
+}
+
+const VALID_ENTITY_TYPES = [
+  "person", "project", "concept", "location",
+  "technology", "organization", "event", "other",
+] as const;
+
+async function processEntities(content: string, memoryId: string, rawEntities: unknown[]) {
+  const validEntities = rawEntities
+    .filter((e: any) => e?.name && e?.type)
+    .map((e: any) => ({
+      name: String(e.name).trim().slice(0, 200),
+      type: VALID_ENTITY_TYPES.includes(e.type) ? e.type : "other",
+      context: e.context ? String(e.context).slice(0, 500) : null,
+    }));
+
+  for (const ent of validEntities) {
+    const { data: existing, error: lookupErr } = await supabase
+      .from("entities")
+      .select("id")
+      .eq("name", ent.name)
+      .eq("entity_type", ent.type)
+      .maybeSingle();
+
+    if (lookupErr) continue;
+
+    const entityId = existing?.id;
+
+    if (entityId) {
+      await supabase
+        .from("entity_mentions")
+        .upsert(
+          { memory_id: memoryId, entity_id: entityId, context: ent.context },
+          { onConflict: "memory_id,entity_id" }
+        );
+    } else {
+      const { data: created, error: insErr } = await supabase
+        .from("entities")
+        .insert({ name: ent.name, entity_type: ent.type })
+        .select("id")
+        .single();
+
+      if (insErr || !created) continue;
+
+      await supabase
+        .from("entity_mentions")
+        .insert({ memory_id: memoryId, entity_id: created.id, context: ent.context });
+    }
+  }
 }
 
 // --- MCP Server ---
@@ -261,6 +405,13 @@ server.registerTool(
         .eq("id", thoughtId);
 
       if (embError) return err(`Embedding save failed: ${embError.message}`);
+
+      try {
+        const rawEntities = Array.isArray(cl.entities) ? cl.entities : [];
+        if (rawEntities.length > 0 && thoughtId) {
+          await processEntities(content, thoughtId as string, rawEntities);
+        }
+      } catch { /* non-blocking */ }
 
       const classifier = useLLM ? "LLM" : "keyword";
       const status = upsertResult?.status === "updated" ? "Updated existing" : "Captured new";
@@ -400,20 +551,19 @@ server.registerTool(
   },
   async ({ key }) => {
     try {
+      const client = getUserClient(currentAuth);
+      const isJwt = currentAuth?.method === "jwt";
+      const qBase = isJwt
+        ? client.from("profile").select("key, value, updated_at").eq("owner_id", currentAuth.userId)
+        : client.from("profile").select("key, value, updated_at").is("owner_id", null);
+
       if (key) {
-        const { data, error } = await supabase
-          .from("profile")
-          .select("key, value, updated_at")
-          .eq("key", key)
-          .single();
+        const { data, error } = await qBase.eq("key", key).single();
         if (error) return err(`Profile key "${key}" not found.`);
         return ok(`Profile: ${data.key}\nUpdated: ${new Date(data.updated_at).toLocaleDateString()}\n\n${JSON.stringify(data.value, null, 2)}`);
       }
 
-      const { data, error } = await supabase
-        .from("profile")
-        .select("key, value, updated_at")
-        .order("key");
+      const { data, error } = await qBase.order("key");
 
       if (error) return err(`Error: ${error.message}`);
       if (!data?.length) return ok("Profile is empty. Use set_profile to add entries.");
@@ -441,9 +591,17 @@ server.registerTool(
   },
   async ({ key, value }) => {
     try {
-      const { error } = await supabase
+      const client = getUserClient(currentAuth);
+      const isJwt = currentAuth?.method === "jwt";
+      const ownerFilter = isJwt
+        ? { owner_id: currentAuth.userId }
+        : { owner_id: null };
+
+      const row = { key, value, updated_at: new Date().toISOString(), ...ownerFilter };
+
+      const { error } = await client
         .from("profile")
-        .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+        .upsert(row, { onConflict: isJwt ? "key,owner_id" : "key" });
 
       if (error) return err(`Failed: ${error.message}`);
       return ok(`Profile "${key}" saved.`);
@@ -456,6 +614,45 @@ server.registerTool(
 // ============================================================
 // PROJECT TOOLS
 // ============================================================
+
+server.registerTool(
+  "whoami",
+  {
+    title: "Auth Status",
+    description: "Return the current authentication context: user ID, email, auth method (JWT or API key), and profile sections.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const auth = currentAuth;
+      if (!auth) return err("Not authenticated.");
+
+      const lines = [
+        `Auth method: ${auth.method === "jwt" ? "JWT Bearer token" : "Static API key"}`,
+        `User ID: ${auth.userId}`,
+      ];
+      if (auth.email) lines.push(`Email: ${auth.email}`);
+
+      if (auth.method === "jwt") {
+        const client = getUserClient(auth);
+        const { data: profileKeys, error } = await client
+          .from("profile")
+          .select("key")
+          .eq("owner_id", auth.userId)
+          .order("key");
+
+        if (!error && profileKeys?.length) {
+          lines.push("", "Profile sections:");
+          profileKeys.forEach((p: any) => lines.push(`  - ${p.key}`));
+        }
+      }
+
+      return ok(lines.join("\n"));
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
 
 server.registerTool(
   "list_projects",
@@ -583,7 +780,15 @@ server.registerTool(
         .single();
 
       if (error) return err(`Health log failed: ${error.message}`);
+      const id = data?.id;
       const ts = event_time || timestamp;
+
+      try {
+        const text = recordToText(entry_type, { ...row, event_time: row.event_time || timestamp });
+        const embedding = await getEmbedding(text);
+        await supabase.from("health_entries").update({ embedding }).eq("id", id);
+      } catch { /* non-blocking */ }
+
       return ok(`Health entry logged: ${entry_type} at ${new Date(ts).toLocaleString()}`);
     } catch (e: any) {
       return err(`Error: ${e.message}`);
@@ -638,6 +843,54 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "search_health",
+  {
+    title: "Search Health (Semantic)",
+    description:
+      "Search health entries by semantic meaning. Use when the user asks about health patterns like 'days I slept poorly', 'high heart rate episodes', 'when did I walk a lot'.",
+    inputSchema: {
+      query: z.string().describe("Natural language search query"),
+      limit: z.number().optional().default(10),
+      threshold: z.number().optional().default(0.3),
+      entry_type: z.string().optional().describe("Filter by entry type (e.g. sleep, steps, heart_rate)"),
+    },
+  },
+  async ({ query, limit, threshold, entry_type }) => {
+    try {
+      const qEmb = await getEmbedding(query);
+      const { data, error } = await supabase.rpc("search_health_entries", {
+        query_embedding: qEmb,
+        match_threshold: threshold,
+        match_count: limit,
+        filter_entry_type: entry_type || null,
+      });
+
+      if (error) return err(`Search error: ${error.message}`);
+      if (!data || data.length === 0)
+        return ok(`No health entries found matching "${query}".`);
+
+      const results = data.map(
+        (t: any, i: number) => {
+          const parts = [
+            `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
+            `Type: ${t.entry_type}`,
+            `Date: ${new Date(t.event_time || t.timestamp).toLocaleString()}`,
+          ];
+          if (t.numeric_value != null) parts.push(`Value: ${t.numeric_value}`);
+          if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
+          parts.push(`\n${JSON.stringify(t.value)}`);
+          return parts.join("\n");
+        }
+      );
+
+      return ok(`Found ${data.length} health entr${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
 // ============================================================
 // TRAINING TOOLS
 // ============================================================
@@ -686,6 +939,14 @@ server.registerTool(
         .single();
 
       if (error) return err(`Workout log failed: ${error.message}`);
+      const id = data?.id;
+
+      try {
+        const text = workoutToText({ ...row, event_time: row.event_time || workout_date });
+        const embedding = await getEmbedding(text);
+        await supabase.from("training_logs").update({ embedding }).eq("id", id);
+      } catch { /* non-blocking */ }
+
       return ok(`Workout logged: ${name} (${workout_type}) on ${workout_date}`);
     } catch (e: any) {
       return err(`Error: ${e.message}`);
@@ -730,6 +991,330 @@ server.registerTool(
         return `${i + 1}. [${w.workout_date}] ${w.name} (${w.workout_type})${vol}${rpe}\n   ${exCount}${w.notes ? " -- " + w.notes : ""}`;
       });
       return ok(`${data.length} workout(s):\n\n${results.join("\n\n")}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "search_workouts",
+  {
+    title: "Search Workouts (Semantic)",
+    description:
+      "Search training logs by semantic meaning. Use when the user asks about training patterns like 'heavy bench press days', 'cardio sessions last month', 'high volume workouts'.",
+    inputSchema: {
+      query: z.string().describe("Natural language search query"),
+      limit: z.number().optional().default(10),
+      threshold: z.number().optional().default(0.3),
+      workout_type: z.string().optional().describe("Filter: strength, cardio, flexibility, other"),
+    },
+  },
+  async ({ query, limit, threshold, workout_type }) => {
+    try {
+      const qEmb = await getEmbedding(query);
+      const { data, error } = await supabase.rpc("search_training_logs", {
+        query_embedding: qEmb,
+        match_threshold: threshold,
+        match_count: limit,
+        filter_workout_type: workout_type || null,
+      });
+
+      if (error) return err(`Search error: ${error.message}`);
+      if (!data || data.length === 0)
+        return ok(`No workouts found matching "${query}".`);
+
+      const results = data.map(
+        (t: any, i: number) => {
+          const parts = [
+            `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
+            `Workout: ${t.name} (${t.workout_type}) on ${t.workout_date}`,
+          ];
+          if (t.volume_kg != null) parts.push(`Volume: ${t.volume_kg}kg`);
+          if (t.rpe != null) parts.push(`RPE: ${t.rpe}`);
+          if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
+          if (t.exercises?.length) {
+            const exList = t.exercises.map((e: any) => {
+              const sets = e.sets != null ? `${e.sets}x` : "";
+              const reps = e.reps != null ? `${e.reps}` : "";
+              const w = e.weight_kg != null ? `@${e.weight_kg}kg` : "";
+              return `  - ${e.name} ${sets}${reps}${w}`.trim();
+            });
+            parts.push(`Exercises:\n${exList.join("\n")}`);
+          }
+          if (t.notes) parts.push(`Notes: ${t.notes}`);
+          return parts.join("\n");
+        }
+      );
+
+      return ok(`Found ${data.length} workout(s):\n\n${results.join("\n\n")}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+// ============================================================
+// DERIVED METRICS TOOLS
+// ============================================================
+
+server.registerTool(
+  "health_summary",
+  {
+    title: "Health Summary",
+    description:
+      "View daily aggregated health summaries. Use when the user asks about their daily or weekly health overview, sleep stats, step counts, heart rate trends, or training volume.",
+    inputSchema: {
+      days: z.number().optional().default(7).describe("Number of recent days to show"),
+      from: z.string().optional().describe("Start date YYYY-MM-DD (overrides days)"),
+      to: z.string().optional().describe("End date YYYY-MM-DD (overrides days)"),
+    },
+  },
+  async ({ days, from, to }) => {
+    try {
+      let q = supabase
+        .from("health_summaries")
+        .select("*")
+        .order("date", { ascending: false })
+        .limit(days);
+
+      if (from) q = q.gte("date", from);
+      if (to) q = q.lte("date", to);
+      if (!from) {
+        const since = new Date();
+        since.setDate(since.getDate() - days);
+        q = q.gte("date", since.toISOString().split("T")[0]);
+      }
+
+      const { data, error } = await q;
+      if (error) return err(`Error: ${error.message}`);
+      if (!data?.length) return ok("No summary computed yet. Use refresh_summary to generate one.");
+
+      const lines = data.map((s: any) => {
+        const parts = [`== ${s.date} ==`];
+        if (s.sleep_total_hours != null) parts.push(`Sleep: ${s.sleep_total_hours}h (${s.sleep_sessions || 0} sessions)`);
+        if (s.steps_total != null) parts.push(`Steps: ${s.steps_total}${s.steps_active_minutes ? ` (${s.steps_active_minutes}min active)` : ""}`);
+        if (s.hr_avg != null) parts.push(`HR: avg ${s.hr_avg} / min ${s.hr_min} / max ${s.hr_max} bpm (${s.hr_samples} samples)`);
+        if (s.weight_kg != null) parts.push(`Weight: ${s.weight_kg}kg`);
+        if (s.exercise_count > 0) parts.push(`Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""}`);
+        if (s.workout_count > 0) parts.push(`Training: ${s.workout_count} workouts${s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""}${s.training_types?.length ? ` [${s.training_types.join(", ")}]` : ""}`);
+        if (s.sources?.length) parts.push(`Sources: ${s.sources.join(", ")}`);
+        return parts.join("\n");
+      });
+
+      return ok(`${data.length} day(s):\n\n${lines.join("\n\n")}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "refresh_summary",
+  {
+    title: "Refresh Summary",
+    description:
+      "Compute or re-compute daily health summaries from raw health_entries and training_logs. Use after importing new data or to recalculate summaries.",
+    inputSchema: {
+      date: z.string().optional().describe("Single date YYYY-MM-DD to refresh"),
+      days: z.number().optional().default(1).describe("Number of recent days to refresh (used when date is omitted)"),
+    },
+  },
+  async ({ date, days }) => {
+    try {
+      const dates: string[] = [];
+      if (date) {
+        dates.push(date);
+      } else {
+        for (let i = 0; i < days; i++) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          dates.push(d.toISOString().split("T")[0]);
+        }
+      }
+
+      let computed = 0;
+      const errors: string[] = [];
+
+      for (const d of dates) {
+        const { error: rpcError } = await supabase.rpc("compute_daily_summary", {
+          target_date: d,
+        });
+        if (rpcError) {
+          errors.push(`${d}: ${rpcError.message}`);
+        } else {
+          computed++;
+        }
+      }
+
+      let result = `Refreshed ${computed} of ${dates.length} summary(s).`;
+      if (errors.length) result += `\n\nErrors:\n${errors.join("\n")}`;
+      return ok(result);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+// ============================================================
+// ENTITY / KNOWLEDGE GRAPH TOOLS
+// ============================================================
+
+server.registerTool(
+  "search_entities",
+  {
+    title: "Search Entities",
+    description:
+      "Search the knowledge graph for entities by name. Use when the user asks about a person, project, concept, technology, organization, location, or event they've mentioned in their memories.",
+    inputSchema: {
+      query: z.string().describe("Entity name or partial name to search for"),
+      entity_type: z.string().optional().describe("Filter: person, project, concept, location, technology, organization, event, other"),
+      limit: z.number().optional().default(10),
+    },
+  },
+  async ({ query, entity_type, limit }) => {
+    try {
+      let q = supabase
+        .from("entities")
+        .select("id, name, entity_type, description, created_at")
+        .ilike("name", `%${query}%`)
+        .limit(limit);
+
+      if (entity_type) q = q.eq("entity_type", entity_type);
+
+      const { data, error } = await q;
+      if (error) return err(`Error: ${error.message}`);
+      if (!data?.length) return ok(`No entities found matching "${query}".`);
+
+      const entityIds = data.map((e: any) => e.id);
+      const { count: mentionCounts } = await supabase
+        .from("entity_mentions")
+        .select("entity_id", { count: "exact", head: true })
+        .in("entity_id", entityIds);
+
+      const results = data.map((e: any, i: number) => {
+        const desc = e.description ? `\n   ${e.description}` : "";
+        return `${i + 1}. ${e.name} (${e.entity_type})${desc}`;
+      });
+
+      return ok(`${data.length} entit${data.length === 1 ? "y" : "ies"} found:\n\n${results.join("\n")}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "get_entity",
+  {
+    title: "Get Entity",
+    description:
+      "Get full entity details including all memories that mention this entity. Use when the user wants to see everything related to a specific person, project, concept, etc.",
+    inputSchema: {
+      entity_id: z.string().uuid().describe("Entity UUID"),
+      limit: z.number().optional().default(10),
+    },
+  },
+  async ({ entity_id, limit }) => {
+    try {
+      const { data: entity, error: entityErr } = await supabase
+        .from("entities")
+        .select("*")
+        .eq("id", entity_id)
+        .single();
+
+      if (entityErr || !entity) return err(`Entity not found.`);
+
+      const { data: mentions, error: mentionErr } = await supabase
+        .from("entity_mentions")
+        .select("memory_id, context, created_at")
+        .eq("entity_id", entity_id)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (mentionErr) return err(`Error: ${mentionErr.message}`);
+
+      const memoryIds = (mentions || []).map((m: any) => m.memory_id);
+      let memoryDetails: any[] = [];
+      if (memoryIds.length) {
+        const { data: mems } = await supabase
+          .from("memories")
+          .select("id, content, title, category, created_at")
+          .in("id", memoryIds);
+        memoryDetails = mems || [];
+      }
+
+      const memById = new Map(memoryDetails.map((m: any) => [m.id, m]));
+      const lines = [
+        `== ${entity.name} (${entity.entity_type}) ==`,
+        entity.description ? `Description: ${entity.description}` : "",
+        entity.aliases?.length ? `Aliases: ${entity.aliases.join(", ")}` : "",
+        `Created: ${new Date(entity.created_at).toLocaleDateString()}`,
+        `Mentioned in ${(mentions || []).length} memories`,
+      ].filter(Boolean);
+
+      if (mentions?.length) {
+        lines.push("", "Related memories:");
+        mentions.forEach((m: any, i: number) => {
+          const mem = memById.get(m.memory_id);
+          if (mem) {
+            lines.push(`  ${i + 1}. [${new Date(mem.created_at).toLocaleDateString()}] ${mem.category}: ${mem.title || mem.content.slice(0, 100)}`);
+            if (m.context) lines.push(`     "${m.context}"`);
+          }
+        });
+      }
+
+      return ok(lines.join("\n"));
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "list_entities",
+  {
+    title: "List Entities",
+    description:
+      "List all entities in the knowledge graph, optionally filtered by type. Sorted by number of mentions (most connected first). Use to browse the knowledge graph.",
+    inputSchema: {
+      entity_type: z.string().optional().describe("Filter: person, project, concept, location, technology, organization, event, other"),
+      limit: z.number().optional().default(25),
+    },
+  },
+  async ({ entity_type, limit }) => {
+    try {
+      let entityQ = supabase
+        .from("entities")
+        .select("id, name, entity_type, description, created_at");
+
+      if (entity_type) entityQ = entityQ.eq("entity_type", entity_type);
+
+      const { data: entities, error: entityErr } = await entityQ;
+      if (entityErr) return err(`Error: ${entityErr.message}`);
+      if (!entities?.length) return ok("No entities in the knowledge graph yet.");
+
+      const entityIds = entities.map((e: any) => e.id);
+      const { data: mentions } = await supabase
+        .from("entity_mentions")
+        .select("entity_id")
+        .in("entity_id", entityIds);
+
+      const countByEntity = new Map<string, number>();
+      for (const m of mentions || []) {
+        countByEntity.set(m.entity_id, (countByEntity.get(m.entity_id) || 0) + 1);
+      }
+
+      const sorted = entities
+        .map((e: any) => ({ ...e, mention_count: countByEntity.get(e.id) || 0 }))
+        .sort((a: any, b: any) => b.mention_count - a.mention_count)
+        .slice(0, limit);
+
+      const results = sorted.map((e: any, i: number) =>
+        `${i + 1}. ${e.name} (${e.entity_type}) — ${e.mention_count} mention${e.mention_count === 1 ? "" : "s"}`
+      );
+
+      return ok(`${sorted.length} entit${sorted.length === 1 ? "y" : "ies"}:\n\n${results.join("\n")}`);
     } catch (e: any) {
       return err(`Error: ${e.message}`);
     }
@@ -942,6 +1527,8 @@ server.registerTool(
 // HONO APP -- Auth + CORS + MCP Transport
 // ============================================================
 
+let currentAuth: AuthContext | undefined;
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -949,21 +1536,46 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
 };
 
+async function authenticate(c: any): Promise<AuthContext | null> {
+  const authHeader = c.req.header("authorization") || c.req.header("Authorization");
+
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (!error && user) {
+        return {
+          method: "jwt",
+          userId: user.id,
+          email: user.email || undefined,
+        };
+      }
+    } catch { /* fall through to key auth */ }
+  }
+
+  const keyProvided =
+    c.req.header("x-brain-key") ||
+    new URL(c.req.url).searchParams.get("key");
+
+  if (keyProvided && keyProvided === MCP_ACCESS_KEY) {
+    return { method: "key", userId: "service-role" };
+  }
+
+  return null;
+}
+
 const app = new Hono();
 
 app.options("*", (c) => c.text("ok", 200, corsHeaders));
 
 app.all("*", async (c) => {
-  // Auth: accept key via header or query param
-  const provided =
-    c.req.header("x-brain-key") ||
-    new URL(c.req.url).searchParams.get("key");
-
-  if (!provided || provided !== MCP_ACCESS_KEY) {
+  const auth = await authenticate(c);
+  if (!auth) {
     return c.json({ error: "Unauthorized" }, 401, corsHeaders);
   }
 
-  // Fix: some MCP clients don't send the Accept header StreamableHTTP expects
+  currentAuth = auth;
+
   if (!c.req.header("accept")?.includes("text/event-stream")) {
     const headers = new Headers(c.req.raw.headers);
     headers.set("Accept", "application/json, text/event-stream");
