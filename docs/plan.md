@@ -189,7 +189,7 @@ Embed health and training records for semantic search ("hardest workouts",
 | 3.1 | Unified import path (shared.py) | ✅ | 0dc6788 |
 | 3.2 | Cheaper embeddings (keyword classify) | ✅ | 0dc6788 |
 | 3.3 | External ID for upsert | ✅ | 0dc6788 |
-| 4.1 | Derived metrics | ⬜ | |
-| 4.2 | Knowledge graph | ⬜ | |
-| 4.3 | OAuth2 auth | ⬜ | |
-| 4.4 | Vector search on health data | ⬜ | |
+| 4.1 | Derived metrics | ✅ | f9d5d93 |
+| 4.2 | Knowledge graph | ✅ | f9d5d93 |
+| 4.3 | OAuth2 auth | ✅ | f9d5d93 |
+| 4.4 | Vector search on health data | ✅ | f9d5d93 |
