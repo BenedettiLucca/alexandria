@@ -1,6 +1,29 @@
+# Secrets
 .env
-node_modules/
+client_secret.json
+token.json
+ironlog.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Supabase
 .supabase/
-*.pyc
+
+# Node/Deno
+node_modules/
+
+# Python
 __pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
