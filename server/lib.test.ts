@@ -1,12 +1,13 @@
-import { assertEquals, assertExists } from "jsr:@std/assert";
+// deno-lint-ignore no-import-prefix
+import { assertEquals, assertExists } from "jsr:@std/assert@1.0.12";
 import {
+  extractNumericValue,
+  recordToText,
+  sanitizeClassification,
+  simpleClassify,
   VALID_CATEGORIES,
   VALID_SOURCES,
-  simpleClassify,
-  sanitizeClassification,
-  recordToText,
   workoutToText,
-  extractNumericValue,
 } from "./lib.ts";
 
 // --- simpleClassify ---
@@ -70,7 +71,8 @@ Deno.test("simpleClassify handles empty string", () => {
 });
 
 Deno.test("simpleClassify handles long text with no keywords", () => {
-  const longText = "The quick brown fox jumps over the lazy dog and then goes to the market to buy some apples and oranges and bananas and grapes and watermelon and cantaloupe and honeydew and strawberries and blueberries and raspberries";
+  const longText =
+    "The quick brown fox jumps over the lazy dog and then goes to the market to buy some apples and oranges and bananas and grapes and watermelon and cantaloupe and honeydew and strawberries and blueberries and raspberries";
   const result = simpleClassify(longText);
   assertEquals(result.category, "note");
 });
@@ -78,7 +80,12 @@ Deno.test("simpleClassify handles long text with no keywords", () => {
 // --- sanitizeClassification ---
 
 Deno.test("sanitizeClassification passes valid classification", () => {
-  const raw = { category: "idea", importance: 7, tags: ["brainstorm"], people: ["Alice"] };
+  const raw = {
+    category: "idea",
+    importance: 7,
+    tags: ["brainstorm"],
+    people: ["Alice"],
+  };
   const result = sanitizeClassification(raw);
   assertEquals(result.category, "idea");
   assertEquals(result.importance, 7);
@@ -107,10 +114,18 @@ Deno.test("sanitizeClassification keeps importance in range", () => {
 });
 
 Deno.test("sanitizeClassification limits tags to 5 and lowercases", () => {
-  const raw = { tags: ["Fitness", "CODING", "Health", "Wellness", "Productivity", "Extra"] };
+  const raw = {
+    tags: ["Fitness", "CODING", "Health", "Wellness", "Productivity", "Extra"],
+  };
   const result = sanitizeClassification(raw);
   assertEquals((result.tags as string[]).length, 5);
-  assertEquals(result.tags, ["fitness", "coding", "health", "wellness", "productivity"]);
+  assertEquals(result.tags, [
+    "fitness",
+    "coding",
+    "health",
+    "wellness",
+    "productivity",
+  ]);
 });
 
 Deno.test("sanitizeClassification deduplicates tags", () => {
@@ -120,7 +135,9 @@ Deno.test("sanitizeClassification deduplicates tags", () => {
 });
 
 Deno.test("sanitizeClassification limits people to 10", () => {
-  const raw = { people: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"] };
+  const raw = {
+    people: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
+  };
   const result = sanitizeClassification(raw);
   assertEquals((result.people as string[]).length, 10);
 });
@@ -219,7 +236,10 @@ Deno.test("recordToText handles missing fields gracefully", () => {
 });
 
 Deno.test("recordToText uses timestamp as fallback", () => {
-  const result = recordToText("weight", { timestamp: "2025-06-01T10:00:00Z", numeric_value: 80 });
+  const result = recordToText("weight", {
+    timestamp: "2025-06-01T10:00:00Z",
+    numeric_value: 80,
+  });
   assertEquals(result.includes("kg"), true);
 });
 
@@ -271,7 +291,10 @@ Deno.test("workoutToText uses workout_date for date", () => {
     workout_type: "cardio",
     duration_s: 1800,
   });
-  assertEquals(result.includes("1800") === false || result.includes("30min"), true);
+  assertEquals(
+    result.includes("1800") === false || result.includes("30min"),
+    true,
+  );
 });
 
 // --- extractNumericValue ---
@@ -301,11 +324,17 @@ Deno.test("extractNumericValue extracts exercise calories as fallback", () => {
 });
 
 Deno.test("extractNumericValue extracts blood_pressure systolic", () => {
-  assertEquals(extractNumericValue("blood_pressure", { systolic: 120, diastolic: 80 }), 120);
+  assertEquals(
+    extractNumericValue("blood_pressure", { systolic: 120, diastolic: 80 }),
+    120,
+  );
 });
 
 Deno.test("extractNumericValue extracts body_composition weight_kg", () => {
-  assertEquals(extractNumericValue("body_composition", { weight_kg: 75, body_fat: 15 }), 75);
+  assertEquals(
+    extractNumericValue("body_composition", { weight_kg: 75, body_fat: 15 }),
+    75,
+  );
 });
 
 Deno.test("extractNumericValue returns null for unknown type", () => {
@@ -313,16 +342,27 @@ Deno.test("extractNumericValue returns null for unknown type", () => {
 });
 
 Deno.test("extractNumericValue returns null for missing value", () => {
-  assertEquals(extractNumericValue("steps", null as any), null);
+  assertEquals(
+    extractNumericValue("steps", null as unknown as Record<string, unknown>),
+    null,
+  );
 });
 
 // --- Constants ---
 
 Deno.test("VALID_CATEGORIES contains expected categories", () => {
   const expected = [
-    "note", "idea", "decision", "observation",
-    "reference", "task", "person", "recipe",
-    "travel", "purchase", "quote",
+    "note",
+    "idea",
+    "decision",
+    "observation",
+    "reference",
+    "task",
+    "person",
+    "recipe",
+    "travel",
+    "purchase",
+    "quote",
   ];
   assertEquals([...VALID_CATEGORIES], expected);
   assertEquals(VALID_CATEGORIES.length, 11);
@@ -330,8 +370,13 @@ Deno.test("VALID_CATEGORIES contains expected categories", () => {
 
 Deno.test("VALID_SOURCES contains expected sources", () => {
   const expected = [
-    "manual", "mcp", "import", "capture",
-    "health-connect", "iron-log", "auto",
+    "manual",
+    "mcp",
+    "import",
+    "capture",
+    "health-connect",
+    "iron-log",
+    "auto",
   ];
   assertEquals([...VALID_SOURCES], expected);
   assertEquals(VALID_SOURCES.length, 7);
