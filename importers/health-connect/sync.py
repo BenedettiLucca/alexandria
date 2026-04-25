@@ -58,6 +58,7 @@ from importers.shared import (
     upsert_record,
     record_sync,
     format_timestamp,
+    format_date,
 )
 
 # Google Health API data types mapped to Alexandria entry_type

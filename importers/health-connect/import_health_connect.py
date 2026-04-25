@@ -194,7 +194,7 @@ WEIGHT_CONFIG = {
 }
 
 BLOOD_PRESSURE_CONFIG = {
-    "table_keywords": ["blood_pressure"],
+    "table_keywords": ["blood_pressure", "bloodpressure"],
     "entry_type": "blood_pressure",
     "tags": ["blood-pressure"],
     "label": "Blood pressure",
