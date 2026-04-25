@@ -15,6 +15,17 @@ const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+const VALID_CATEGORIES = [
+  "note", "idea", "decision", "observation",
+  "reference", "task", "person", "recipe",
+  "travel", "purchase", "quote",
+] as const;
+
+const VALID_SOURCES = [
+  "manual", "mcp", "import", "capture",
+  "health-connect", "iron-log", "auto",
+] as const;
+
 // --- Helpers ---
 
 async function getEmbedding(text: string): Promise<number[]> {
@@ -37,37 +48,64 @@ async function getEmbedding(text: string): Promise<number[]> {
   return d.data[0].embedding;
 }
 
+function sanitizeClassification(raw: Record<string, unknown>): Record<string, unknown> {
+  let category = String(raw.category || "note").toLowerCase().trim();
+  if (!VALID_CATEGORIES.includes(category as any)) category = "note";
+
+  let importance = Number(raw.importance);
+  if (Number.isNaN(importance) || importance < 1 || importance > 10) importance = 5;
+
+  const rawTags = Array.isArray(raw.tags)
+    ? (raw.tags as string[]).map((t) => String(t).toLowerCase().trim()).filter(Boolean)
+    : [];
+  const tags = [...new Set(rawTags)].slice(0, 5);
+
+  const rawPeople = Array.isArray(raw.people)
+    ? (raw.people as string[]).map((p) => String(p).trim()).filter(Boolean)
+    : [];
+  const people = [...new Set(rawPeople)].slice(0, 10);
+
+  const title = typeof raw.title === "string"
+    ? raw.title.slice(0, 60)
+    : null;
+
+  return { category, tags, people, importance, title, dates_mentioned: raw.dates_mentioned || [] };
+}
+
 async function classifyMemory(text: string): Promise<Record<string, unknown>> {
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `Classify this memory. Return JSON with:
-- "category": one of "note", "idea", "decision", "observation", "reference", "task", "person", "recipe", "travel", "purchase", "quote"
+  const defaults = { category: "note", tags: ["uncategorized"], importance: 5, title: "Untitled", people: [], dates_mentioned: [] };
+  try {
+    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `Classify this memory. Return JSON with:
+- "category": one of ${JSON.stringify([...VALID_CATEGORIES])}
 - "tags": array of 1-5 short lowercase tags
 - "people": array of people mentioned (empty if none)
 - "dates_mentioned": array of dates as YYYY-MM-DD (empty if none)
 - "importance": 1-10 (1=trivial, 10=critical life event)
 - "title": short descriptive title (max 60 chars)
 Only extract what is explicitly present.`,
-        },
-        { role: "user", content: text },
-      ],
-    }),
-  });
-  const d = await r.json();
-  try {
-    return JSON.parse(d.choices[0].message.content);
+          },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+    if (!r.ok) return defaults;
+    const d = await r.json();
+    const parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}");
+    return sanitizeClassification(parsed);
   } catch {
-    return { category: "note", tags: ["uncategorized"], importance: 5, title: "Untitled" };
+    return defaults;
   }
 }
 
@@ -220,7 +258,7 @@ server.registerTool(
       limit: z.number().optional().default(10),
       category: z.string().optional().describe("Filter: note, idea, decision, observation, reference, task, person, recipe, travel, purchase, quote"),
       tag: z.string().optional().describe("Filter by single tag"),
-      source: z.string().optional().describe("Filter by source: manual, mcp, import, capture, samsung-health, iron-log, auto"),
+      source: z.string().optional().describe("Filter by source: manual, mcp, import, capture, health-connect, iron-log, auto"),
       days: z.number().optional().describe("Only memories from last N days"),
       importance_min: z.number().optional().describe("Minimum importance (1-10)"),
     },
@@ -483,32 +521,43 @@ server.registerTool(
   "log_health",
   {
     title: "Log Health Entry",
-    description: "Record a health data point. Use for manual logging or data imports from Samsung Health.",
+    description: "Record a health data point. Use for manual logging or data imports from Health Connect.",
     inputSchema: {
-      entry_type: z.string().describe("Type: sleep, exercise, heart_rate, steps, weight, water, nutrition, blood_pressure, stress, cycle"),
+      entry_type: z.string().describe("Type: sleep, exercise, heart_rate, steps, weight, water, nutrition, blood_pressure, stress, cycle, body_composition"),
       timestamp: z.string().describe("ISO 8601 timestamp"),
       duration_s: z.number().optional().describe("Duration in seconds"),
       value: z.record(z.any()).describe("Health data as JSON (varies by type)"),
       tags: z.array(z.string()).optional(),
+      event_time: z.string().optional().describe("ISO 8601 timestamp for when the event actually happened (distinct from ingestion time)"),
+      numeric_value: z.number().optional().describe("Primary numeric value (e.g. bpm for heart_rate, kg for weight, duration_hours for sleep)"),
+      ingestion_source: z.string().optional().describe("Source system: health-connect, iron-log, health-api, mcp"),
+      external_id: z.string().optional().describe("External record ID from source system for upsert dedup"),
     },
   },
-  async ({ entry_type, timestamp, duration_s, value, tags }) => {
+  async ({ entry_type, timestamp, duration_s, value, tags, event_time, numeric_value, ingestion_source, external_id }) => {
     try {
+      const row: Record<string, unknown> = {
+        entry_type,
+        timestamp,
+        duration_s: duration_s || null,
+        value,
+        tags: tags || [],
+        source: "mcp",
+      };
+      if (event_time !== undefined) row.event_time = event_time;
+      if (numeric_value !== undefined) row.numeric_value = numeric_value;
+      if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
+      if (external_id !== undefined) row.external_id = external_id;
+
       const { data, error } = await supabase
         .from("health_entries")
-        .insert({
-          entry_type,
-          timestamp,
-          duration_s: duration_s || null,
-          value,
-          tags: tags || [],
-          source: "mcp",
-        })
+        .insert(row)
         .select("id")
         .single();
 
       if (error) return err(`Health log failed: ${error.message}`);
-      return ok(`Health entry logged: ${entry_type} at ${new Date(timestamp).toLocaleString()}`);
+      const ts = event_time || timestamp;
+      return ok(`Health entry logged: ${entry_type} at ${new Date(ts).toLocaleString()}`);
     } catch (e: any) {
       return err(`Error: ${e.message}`);
     }
@@ -524,31 +573,36 @@ server.registerTool(
       entry_type: z.string().optional().describe("Filter by type"),
       days: z.number().optional().describe("Last N days"),
       limit: z.number().optional().default(20),
+      event_from: z.string().optional().describe("Filter from event_time (ISO 8601)"),
+      event_to: z.string().optional().describe("Filter to event_time (ISO 8601)"),
     },
   },
-  async ({ entry_type, days, limit }) => {
+  async ({ entry_type, days, limit, event_from, event_to }) => {
     try {
       let q = supabase
         .from("health_entries")
-        .select("entry_type, timestamp, duration_s, value, tags")
-        .order("timestamp", { ascending: false })
+        .select("entry_type, timestamp, event_time, duration_s, numeric_value, value, tags")
+        .order("event_time", { ascending: false, nullsFirst: false })
         .limit(limit);
 
       if (entry_type) q = q.eq("entry_type", entry_type);
       if (days) {
         const since = new Date();
         since.setDate(since.getDate() - days);
-        q = q.gte("timestamp", since.toISOString());
+        q = q.gte("event_time", since.toISOString());
       }
+      if (event_from) q = q.gte("event_time", event_from);
+      if (event_to) q = q.lte("event_time", event_to);
 
       const { data, error } = await q;
       if (error) return err(`Error: ${error.message}`);
       if (!data?.length) return ok("No health entries found.");
 
       const results = data.map((e: any, i: number) => {
-        const ts = new Date(e.timestamp).toLocaleString();
+        const ts = new Date(e.event_time || e.timestamp).toLocaleString();
         const dur = e.duration_s ? ` (${Math.round(e.duration_s / 60)}min)` : "";
-        return `${i + 1}. [${ts}] ${e.entry_type}${dur}\n   ${JSON.stringify(e.value)}`;
+        const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
+        return `${i + 1}. [${ts}] ${e.entry_type}${dur}${numVal}\n   ${JSON.stringify(e.value)}`;
       });
       return ok(`${data.length} health entries:\n\n${results.join("\n\n")}`);
     } catch (e: any) {
@@ -576,23 +630,31 @@ server.registerTool(
       rpe: z.number().optional().describe("Overall RPE 1-10"),
       notes: z.string().optional(),
       tags: z.array(z.string()).optional(),
+      event_time: z.string().optional().describe("ISO 8601 timestamp for when the workout actually happened"),
+      ingestion_source: z.string().optional().describe("Source system: iron-log, health-connect, mcp"),
+      external_id: z.string().optional().describe("External record ID from source system for upsert dedup"),
     },
   },
-  async ({ workout_date, workout_type, name, exercises, duration_s, volume_kg, rpe, notes, tags }) => {
+  async ({ workout_date, workout_type, name, exercises, duration_s, volume_kg, rpe, notes, tags, event_time, ingestion_source, external_id }) => {
     try {
+      const row: Record<string, unknown> = {
+        workout_date,
+        workout_type,
+        name,
+        exercises,
+        duration_s: duration_s || null,
+        volume_kg: volume_kg || null,
+        rpe: rpe || null,
+        notes: notes || null,
+        tags: tags || [],
+      };
+      if (event_time !== undefined) row.event_time = event_time;
+      if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
+      if (external_id !== undefined) row.external_id = external_id;
+
       const { data, error } = await supabase
         .from("training_logs")
-        .insert({
-          workout_date,
-          workout_type,
-          name,
-          exercises,
-          duration_s: duration_s || null,
-          volume_kg: volume_kg || null,
-          rpe: rpe || null,
-          notes: notes || null,
-          tags: tags || [],
-        })
+        .insert(row)
         .select("id")
         .single();
 
@@ -619,8 +681,8 @@ server.registerTool(
     try {
       let q = supabase
         .from("training_logs")
-        .select("workout_date, workout_type, name, exercises, volume_kg, rpe, notes")
-        .order("workout_date", { ascending: false })
+        .select("workout_date, workout_type, name, exercises, volume_kg, rpe, notes, event_time")
+        .order("event_time", { ascending: false, nullsFirst: false })
         .limit(limit);
 
       if (workout_type) q = q.eq("workout_type", workout_type);
@@ -641,6 +703,208 @@ server.registerTool(
         return `${i + 1}. [${w.workout_date}] ${w.name} (${w.workout_type})${vol}${rpe}\n   ${exCount}${w.notes ? " -- " + w.notes : ""}`;
       });
       return ok(`${data.length} workout(s):\n\n${results.join("\n\n")}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+// ============================================================
+// CRUD TOOLS
+// ============================================================
+
+server.registerTool(
+  "update_memory",
+  {
+    title: "Update Memory",
+    description: "Update an existing memory. If content changes, the embedding is regenerated and the memory is reclassified.",
+    inputSchema: {
+      id: z.string().uuid().describe("Memory ID to update"),
+      content: z.string().optional().describe("New content (triggers re-embedding + reclassification)"),
+      title: z.string().optional(),
+      category: z.string().optional(),
+      importance: z.number().min(1).max(10).optional(),
+      tags: z.array(z.string()).optional(),
+      people: z.array(z.string()).optional(),
+    },
+  },
+  async ({ id, content, title, category, importance, tags, people }) => {
+    try {
+      const update: Record<string, unknown> = {};
+      if (title !== undefined) update.title = title;
+      if (category !== undefined) {
+        if (!VALID_CATEGORIES.includes(category as any)) return err(`Invalid category: "${category}". Valid: ${VALID_CATEGORIES.join(", ")}`);
+        update.category = category;
+      }
+      if (importance !== undefined) update.importance = importance;
+      if (tags !== undefined) update.tags = tags;
+      if (people !== undefined) update.people = people;
+
+      if (content !== undefined) {
+        update.content = content;
+        const [embedding, classification] = await Promise.all([
+          getEmbedding(content),
+          classifyMemory(content),
+        ]);
+        update.embedding = embedding;
+        if (!title) update.title = classification.title || null;
+        if (!category) update.category = classification.category;
+        if (importance === undefined) update.importance = classification.importance;
+        const cl = classification;
+        if (tags === undefined && cl.tags) update.tags = cl.tags;
+        if (people === undefined && cl.people) update.people = cl.people;
+      }
+
+      const { data, error } = await supabase
+        .from("memories")
+        .update(update)
+        .eq("id", id)
+        .select("id, title, category")
+        .single();
+
+      if (error) return err(`Update failed: ${error.message}`);
+      if (!data) return err(`Memory ${id} not found.`);
+      return ok(`Memory updated: "${data.title || data.id}" (${data.category})`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "delete_memory",
+  {
+    title: "Delete Memory",
+    description: "Permanently delete a memory by ID.",
+    inputSchema: {
+      id: z.string().uuid().describe("Memory ID to delete"),
+    },
+  },
+  async ({ id }) => {
+    try {
+      const { data, error } = await supabase
+        .from("memories")
+        .delete()
+        .eq("id", id)
+        .select("id, title")
+        .single();
+
+      if (error) return err(`Delete failed: ${error.message}`);
+      if (!data) return err(`Memory ${id} not found.`);
+      return ok(`Deleted memory: "${data.title || data.id}"`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "delete_health_entry",
+  {
+    title: "Delete Health Entry",
+    description: "Permanently delete a health entry by ID.",
+    inputSchema: {
+      id: z.string().uuid().describe("Health entry ID to delete"),
+    },
+  },
+  async ({ id }) => {
+    try {
+      const { data, error } = await supabase
+        .from("health_entries")
+        .delete()
+        .eq("id", id)
+        .select("id, entry_type, timestamp")
+        .single();
+
+      if (error) return err(`Delete failed: ${error.message}`);
+      if (!data) return err(`Health entry ${id} not found.`);
+      return ok(`Deleted health entry: ${data.entry_type} at ${new Date(data.timestamp).toLocaleString()}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "update_workout",
+  {
+    title: "Update Workout",
+    description: "Update an existing training log entry.",
+    inputSchema: {
+      id: z.string().uuid().describe("Workout ID to update"),
+      name: z.string().optional(),
+      workout_type: z.string().optional(),
+      exercises: z.array(z.record(z.any())).optional().describe("Array of exercises: [{name, sets, reps, weight_kg, rpe, notes}]"),
+      duration_s: z.number().optional(),
+      volume_kg: z.number().optional(),
+      rpe: z.number().min(1).max(10).optional(),
+      notes: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    },
+  },
+  async ({ id, name, workout_type, exercises, duration_s, volume_kg, rpe, notes, tags }) => {
+    try {
+      const update: Record<string, unknown> = {};
+      if (name !== undefined) update.name = name;
+      if (workout_type !== undefined) update.workout_type = workout_type;
+      if (exercises !== undefined) update.exercises = exercises;
+      if (duration_s !== undefined) update.duration_s = duration_s;
+      if (volume_kg !== undefined) update.volume_kg = volume_kg;
+      if (rpe !== undefined) update.rpe = rpe;
+      if (notes !== undefined) update.notes = notes;
+      if (tags !== undefined) update.tags = tags;
+
+      const { data, error } = await supabase
+        .from("training_logs")
+        .update(update)
+        .eq("id", id)
+        .select("id, name, workout_type, workout_date")
+        .single();
+
+      if (error) return err(`Update failed: ${error.message}`);
+      if (!data) return err(`Workout ${id} not found.`);
+      return ok(`Workout updated: "${data.name}" (${data.workout_type}) on ${data.workout_date}`);
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  }
+);
+
+server.registerTool(
+  "sync_status",
+  {
+    title: "Sync Status",
+    description: "View recent sync history from the sync_log table.",
+    inputSchema: {
+      source: z.string().optional().describe("Filter by source: iron-log, health-connect, health-api"),
+      limit: z.number().optional().default(10),
+    },
+  },
+  async ({ source, limit }) => {
+    try {
+      let q = supabase
+        .from("sync_log")
+        .select("id, source, sync_type, records_processed, records_imported, records_skipped, records_failed, started_at, completed_at, status, error_message")
+        .order("started_at", { ascending: false })
+        .limit(limit);
+
+      if (source) q = q.eq("source", source);
+
+      const { data, error } = await q;
+      if (error) return err(`Error: ${error.message}`);
+      if (!data?.length) return ok("No sync history found.");
+
+      const results = data.map((s: any, i: number) => {
+        const started = new Date(s.started_at).toLocaleString();
+        const completed = s.completed_at ? new Date(s.completed_at).toLocaleString() : "—";
+        const dur = s.completed_at
+          ? `${Math.round((new Date(s.completed_at).getTime() - new Date(s.started_at).getTime()) / 1000)}s`
+          : "—";
+        const errLine = s.error_message ? `\n   Error: ${s.error_message}` : "";
+        return `${i + 1}. [${started}] ${s.source} (${s.sync_type}) — ${s.status}${errLine}\n   Processed: ${s.records_processed} | Imported: ${s.records_imported} | Skipped: ${s.records_skipped} | Failed: ${s.records_failed}\n   Duration: ${dur} | Completed: ${completed}`;
+      });
+
+      return ok(`${data.length} sync(s):\n\n${results.join("\n\n")}`);
     } catch (e: any) {
       return err(`Error: ${e.message}`);
     }

@@ -32,21 +32,34 @@ def connect_supabase():
 
 
 def epoch_to_iso(epoch_ms):
-    """Convert epoch milliseconds to ISO 8601 string."""
     if not epoch_ms:
         return None
     return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).isoformat()
 
 
 def epoch_to_date(epoch_ms):
-    """Convert epoch milliseconds to YYYY-MM-DD string."""
     if not epoch_ms:
         return None
     return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def record_sync(supabase, source, started_at, processed, imported, skipped):
+    try:
+        supabase.table("sync_log").insert({
+            "source": source,
+            "sync_type": "full",
+            "records_processed": processed,
+            "records_imported": imported,
+            "records_skipped": skipped,
+            "status": "completed",
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception as e:
+        print(f"  Warning: failed to record sync_log: {e}")
+
+
 def import_sessions(db_path, supabase):
-    """Import workout sessions with their sets into training_logs."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
@@ -61,14 +74,12 @@ def import_sessions(db_path, supabase):
     skipped = 0
 
     for session in sessions:
-        # Get all sets for this session
         sets = conn.execute("""
             SELECT * FROM sets
             WHERE session_id = ?
             ORDER BY exercise_name, set_number
         """, (session["id"],)).fetchall()
 
-        # Build exercises array
         exercises_by_name = {}
         for s in sets:
             name = s["exercise_name"] or "Unknown"
@@ -88,25 +99,21 @@ def import_sessions(db_path, supabase):
 
         exercises = list(exercises_by_name.values())
 
-        # Calculate total volume
         total_volume = sum(
             (s["weight_kg"] or 0) * (s["reps"] or 0)
             for s in sets
             if not s["is_warmup"]
         )
 
-        # Workout date
         workout_date = epoch_to_date(session["start_time"])
         if not workout_date:
             skipped += 1
             continue
 
-        # Dedup fingerprint
         fingerprint = sha256(
             f"ironlog-session-{session['id']}-{workout_date}".encode()
         ).hexdigest()
 
-        # Check if already imported
         existing = supabase.table("training_logs").select("id").contains(
             "metadata", {"import_fingerprint": fingerprint}
         ).execute()
@@ -115,7 +122,6 @@ def import_sessions(db_path, supabase):
             skipped += 1
             continue
 
-        # Determine workout type from exercises
         exercise_types = conn.execute("""
             SELECT DISTINCT e.type
             FROM sets s
@@ -133,14 +139,12 @@ def import_sessions(db_path, supabase):
 
         name = session["routine_name"] or session["notes"] or "Workout"
 
-        # Duration in seconds
         duration_s = None
         if session["start_time"] and session["end_time"]:
             duration_s = int((session["end_time"] - session["start_time"]) / 1000)
         elif session["duration_minutes"]:
             duration_s = session["duration_minutes"] * 60
 
-        # Insert
         result = supabase.table("training_logs").insert({
             "workout_date": workout_date,
             "workout_type": workout_type,
@@ -151,6 +155,9 @@ def import_sessions(db_path, supabase):
             "rpe": session["s_rpe"],
             "notes": session["notes"],
             "tags": ["iron-log", workout_type],
+            "event_time": epoch_to_iso(session["start_time"]),
+            "ingestion_source": "iron-log",
+            "external_id": str(session["id"]),
             "metadata": {
                 "import_fingerprint": fingerprint,
                 "source": "iron-log",
@@ -165,10 +172,10 @@ def import_sessions(db_path, supabase):
 
     conn.close()
     print(f"\nSessions: {imported} imported, {skipped} skipped (already exist or invalid)")
+    return imported, skipped
 
 
 def import_body_metrics(db_path, supabase):
-    """Import body weight and measurements into health_entries."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
@@ -185,7 +192,8 @@ def import_body_metrics(db_path, supabase):
             skipped += 1
             continue
 
-        # Weight entry
+        ext_id = str(m["date"])
+
         if m["weight"]:
             fingerprint = sha256(
                 f"ironlog-weight-{m['date']}".encode()
@@ -199,14 +207,17 @@ def import_body_metrics(db_path, supabase):
                 supabase.table("health_entries").insert({
                     "entry_type": "weight",
                     "timestamp": ts,
+                    "event_time": ts,
+                    "numeric_value": m["weight"],
                     "value": {"weight_kg": m["weight"]},
                     "source": "iron-log",
+                    "ingestion_source": "iron-log",
+                    "external_id": ext_id,
                     "tags": ["iron-log"],
                     "metadata": {"import_fingerprint": fingerprint},
                 }).execute()
                 imported += 1
 
-        # Measurements entry (monthly check-ins)
         if any([m["waist"], m["arm_right"], m["thigh_right"], m["chest"], m["calf"]]):
             fingerprint = sha256(
                 f"ironlog-measurements-{m['date']}".encode()
@@ -223,10 +234,14 @@ def import_body_metrics(db_path, supabase):
                         measurements[field] = m[field]
 
                 supabase.table("health_entries").insert({
-                    "entry_type": "nutrition",  # closest type for body measurements
+                    "entry_type": "body_composition",
                     "timestamp": ts,
+                    "event_time": ts,
+                    "numeric_value": m["weight"] if m["weight"] else None,
                     "value": measurements,
                     "source": "iron-log",
+                    "ingestion_source": "iron-log",
+                    "external_id": f"{ext_id}-measurements",
                     "tags": ["iron-log", "body-measurements"],
                     "metadata": {"import_fingerprint": fingerprint, "type": m["type"]},
                 }).execute()
@@ -234,6 +249,7 @@ def import_body_metrics(db_path, supabase):
 
     conn.close()
     print(f"Body metrics: {imported} imported, {skipped} skipped")
+    return imported, skipped
 
 
 def main():
@@ -246,14 +262,21 @@ def main():
         print(f"File not found: {db_path}")
         sys.exit(1)
 
+    start_time = datetime.now(timezone.utc).isoformat()
     print(f"Importing from {db_path}...")
     supabase = connect_supabase()
 
     print("\n--- Importing Sessions ---")
-    import_sessions(db_path, supabase)
+    s_imported, s_skipped = import_sessions(db_path, supabase)
 
     print("\n--- Importing Body Metrics ---")
-    import_body_metrics(db_path, supabase)
+    m_imported, m_skipped = import_body_metrics(db_path, supabase)
+
+    total_imported = s_imported + m_imported
+    total_skipped = s_skipped + m_skipped
+    total_processed = total_imported + total_skipped
+
+    record_sync(supabase, "iron-log", start_time, total_processed, total_imported, total_skipped)
 
     print("\nDone!")
 
