@@ -60,6 +60,16 @@ OPENROUTER_API_KEY=sk-or-...
 MCP_ACCESS_KEY=<generate a random string>
 ```
 
+**Optional environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Model for generating embeddings |
+| `CLASSIFICATION_MODEL` | `openai/gpt-4o-mini` | Model for memory classification |
+| `ALLOWED_ORIGINS` | *(all origins)* | Comma-separated list of allowed CORS origins |
+| `GOOGLE_TOKEN_PATH` | `importers/health-connect/token.json` | Path to Google OAuth token file |
+| `GOOGLE_CLIENT_SECRETS_PATH` | `importers/health-connect/client_secret.json` | Path to Google OAuth client secrets file |
+
 To generate a random `MCP_ACCESS_KEY`:
 
 ```bash

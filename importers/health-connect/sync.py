@@ -119,8 +119,8 @@ def get_credentials():
         "https://www.googleapis.com/auth/fitness.blood_pressure.read",
     ]
 
-    token_path = Path(__file__).parent / "token.json"
-    secrets_path = Path(__file__).parent / "client_secret.json"
+    token_path = Path(os.environ.get("GOOGLE_TOKEN_PATH", str(Path(__file__).parent / "token.json")))
+    secrets_path = Path(os.environ.get("GOOGLE_CLIENT_SECRETS_PATH", str(Path(__file__).parent / "client_secret.json")))
 
     # Check for existing token
     if token_path.exists():

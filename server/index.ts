@@ -13,8 +13,38 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
 const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY")!;
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") || "openai/text-embedding-3-small";
+const CLASSIFICATION_MODEL = Deno.env.get("CLASSIFICATION_MODEL") || "openai/gpt-4o-mini";
+const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") || "").split(",").filter(Boolean);
+
+function getCorsHeaders(origin: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-brain-key, accept, mcp-session-id",
+    "Access-Control-Max-Age": "86400",
+  };
+  if (ALLOWED_ORIGINS.length > 0 && origin && ALLOWED_ORIGINS.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Vary"] = "Origin";
+  } else if (ALLOWED_ORIGINS.length === 0) {
+    headers["Access-Control-Allow-Origin"] = "*";
+  }
+  return headers;
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  const encoder = new TextEncoder();
+  const bufA = encoder.encode(a);
+  const bufB = encoder.encode(b);
+  let result = 0;
+  for (let i = 0; i < bufA.length; i++) {
+    result |= bufA[i] ^ bufB[i];
+  }
+  return result === 0;
+}
 
 type AuthContext = {
   method: "jwt" | "key";
@@ -170,13 +200,13 @@ async function getEmbedding(text: string): Promise<number[]> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openai/text-embedding-3-small",
+      model: EMBEDDING_MODEL,
       input: text,
     }),
   });
   if (!r.ok) {
-    const msg = await r.text().catch(() => "");
-    throw new Error(`Embedding failed: ${r.status} ${msg}`);
+    await r.text().catch(() => "");
+    throw new Error("Embedding generation failed");
   }
   const d = await r.json();
   return d.data[0].embedding;
@@ -199,7 +229,7 @@ async function classifyMemory(text: string): Promise<Record<string, unknown>> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: CLASSIFICATION_MODEL,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -241,7 +271,13 @@ function wrapHandler(fn: (...args: unknown[]) => Promise<string>) {
       return ok(await fn(...(args as [unknown])));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      return err(`Error: ${msg}`);
+      const sanitized = msg
+        .replace(/eyJ[A-Za-z0-9_-]+/g, "[REDACTED_TOKEN]")
+        .replace(/https:\/\/[a-z0-9-]+\.supabase\.co[^\s]*/g, "[REDACTED_URL]")
+        .replace(/sk-[A-Za-z0-9-]+/g, "[REDACTED_KEY]")
+        .replace(/status: \d{3}\s/i, "")
+        .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, "[REDACTED_IP]");
+      return err(`Error: ${sanitized}`);
     }
   };
 }
@@ -396,7 +432,7 @@ server.registerTool(
       filter_tags: tags || null,
     });
 
-    if (error) throw new Error(`Search error: ${error.message}`);
+    if (error) throw new Error("Search failed");
     if (!data || data.length === 0) {
       return `No memories found matching "${query}".`;
     }
@@ -485,7 +521,7 @@ server.registerTool(
       );
 
       if (upsertError) {
-        throw new Error(`Capture failed: ${upsertError.message}`);
+        throw new Error("Failed to save memory");
       }
 
       const thoughtId = upsertResult?.id;
@@ -495,7 +531,7 @@ server.registerTool(
         .eq("id", thoughtId);
 
       if (embError) {
-        throw new Error(`Embedding save failed: ${embError.message}`);
+        throw new Error("Failed to save embedding");
       }
 
       try {
@@ -735,7 +771,7 @@ server.registerTool(
       .from("profile")
       .upsert(row, { onConflict: isJwt ? "key,owner_id" : "key" });
 
-    if (error) throw new Error(`Failed: ${error.message}`);
+    if (error) throw new Error("Profile update failed");
     return `Profile "${key}" saved.`;
   }),
 );
@@ -860,12 +896,12 @@ server.registerTool(
           .from("projects")
           .update(update)
           .eq("id", existing.id);
-        if (error) throw new Error(`Update failed: ${error.message}`);
+        if (error) throw new Error("Project update failed");
         return `Project "${name}" updated.`;
       }
 
       const { error } = await supabase.from("projects").insert(update);
-      if (error) throw new Error(`Create failed: ${error.message}`);
+      if (error) throw new Error("Project creation failed");
       return `Project "${name}" created.`;
     },
   ),
@@ -926,7 +962,7 @@ server.registerTool(
         .select("id")
         .single();
 
-      if (error) throw new Error(`Health log failed: ${error.message}`);
+      if (error) throw new Error("Health log failed");
       const id = data?.id;
 
       try {
@@ -1026,7 +1062,7 @@ server.registerTool(
       filter_entry_type: entry_type || null,
     });
 
-    if (error) throw new Error(`Search error: ${error.message}`);
+    if (error) throw new Error("Health search failed");
     if (!data || data.length === 0) {
       return `No health entries found matching "${query}".`;
     }
@@ -1119,7 +1155,7 @@ server.registerTool(
         .select("id")
         .single();
 
-      if (error) throw new Error(`Workout log failed: ${error.message}`);
+      if (error) throw new Error("Workout log failed");
       const id = data?.id;
 
       try {
@@ -1207,7 +1243,7 @@ server.registerTool(
       filter_workout_type: workout_type || null,
     });
 
-    if (error) throw new Error(`Search error: ${error.message}`);
+    if (error) throw new Error("Workout search failed");
     if (!data || data.length === 0) {
       return `No workouts found matching "${query}".`;
     }
@@ -1625,7 +1661,7 @@ server.registerTool(
         .select("id, title, category")
         .single();
 
-      if (error) throw new Error(`Update failed: ${error.message}`);
+      if (error) throw new Error("Memory update failed");
       if (!data) throw new Error(`Memory ${id} not found.`);
       return `Memory updated: "${data.title || data.id}" (${data.category})`;
     },
@@ -1649,7 +1685,7 @@ server.registerTool(
       .select("id, title")
       .single();
 
-    if (error) throw new Error(`Delete failed: ${error.message}`);
+    if (error) throw new Error("Memory delete failed");
     if (!data) throw new Error(`Memory ${id} not found.`);
     return `Deleted memory: "${data.title || data.id}"`;
   }),
@@ -1672,7 +1708,7 @@ server.registerTool(
       .select("id, entry_type, timestamp")
       .single();
 
-    if (error) throw new Error(`Delete failed: ${error.message}`);
+    if (error) throw new Error("Health entry delete failed");
     if (!data) throw new Error(`Health entry ${id} not found.`);
     return `Deleted health entry: ${data.entry_type} at ${
       new Date(data.timestamp).toLocaleString()
@@ -1730,7 +1766,7 @@ server.registerTool(
         .select("id, name, workout_type, workout_date")
         .single();
 
-      if (error) throw new Error(`Update failed: ${error.message}`);
+      if (error) throw new Error("Workout update failed");
       if (!data) throw new Error(`Workout ${id} not found.`);
       return `Workout updated: "${data.name}" (${data.workout_type}) on ${data.workout_date}`;
     },
@@ -1796,13 +1832,6 @@ server.registerTool(
 
 let currentAuth: AuthContext | undefined;
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-brain-key, accept, mcp-session-id",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
-};
-
 async function authenticate(c: Context): Promise<AuthContext | null> {
   const authHeader = c.req.header("authorization") ||
     c.req.header("Authorization");
@@ -1824,7 +1853,7 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
   const keyProvided = c.req.header("x-brain-key") ||
     new URL(c.req.url).searchParams.get("key");
 
-  if (keyProvided && keyProvided === MCP_ACCESS_KEY) {
+  if (keyProvided && timingSafeEqual(keyProvided, MCP_ACCESS_KEY)) {
     return { method: "key", userId: "service-role" };
   }
 
@@ -1833,12 +1862,12 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
 
 const app = new Hono();
 
-app.options("*", (c) => c.text("ok", 200, corsHeaders));
+app.options("*", (c) => c.text("ok", 200, getCorsHeaders(c.req.header("origin"))));
 
 app.all("*", async (c) => {
   const auth = await authenticate(c);
   if (!auth) {
-    return c.json({ error: "Unauthorized" }, 401, corsHeaders);
+    return c.json({ error: "Unauthorized" }, 401, getCorsHeaders(c.req.header("origin")));
   }
 
   currentAuth = auth;
