@@ -3,9 +3,7 @@ import sys
 import sqlite3
 import tempfile
 import importlib.util
-import pytest
 from unittest.mock import MagicMock, MagicMock as MockModule
-from hashlib import sha256
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -16,15 +14,22 @@ if "supabase" not in sys.modules:
 
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-_spec = importlib.util.spec_from_file_location("importers.shared", os.path.join(_base, "importers", "shared.py"))
+_spec = importlib.util.spec_from_file_location(
+    "importers.shared", os.path.join(_base, "importers", "shared.py")
+)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["importers.shared"] = _mod
 _spec.loader.exec_module(_mod)
 
 sys.modules["importers.health_connect"] = type(sys)("importers.health_connect")
-sys.modules["importers.health_connect"].__path__ = [os.path.join(_base, "importers", "health-connect")]
+sys.modules["importers.health_connect"].__path__ = [
+    os.path.join(_base, "importers", "health-connect")
+]
 
-_spec = importlib.util.spec_from_file_location("importers.health_connect.import_health_connect", os.path.join(_base, "importers", "health-connect", "import_health_connect.py"))
+_spec = importlib.util.spec_from_file_location(
+    "importers.health_connect.import_health_connect",
+    os.path.join(_base, "importers", "health-connect", "import_health_connect.py"),
+)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["importers.health_connect.import_health_connect"] = _mod
 sys.modules["importers.health_connect"].import_health_connect = _mod
@@ -134,9 +139,13 @@ def save_db_to_file(db):
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     conn = sqlite3.connect(path)
-    sql = "\n".join(line for line in db.iterdump()
-                    if line.strip() and not line.strip().startswith("COMMIT")
-                    and not line.strip().startswith("BEGIN TRANSACTION"))
+    sql = "\n".join(
+        line
+        for line in db.iterdump()
+        if line.strip()
+        and not line.strip().startswith("COMMIT")
+        and not line.strip().startswith("BEGIN TRANSACTION")
+    )
     conn.executescript(sql)
     conn.close()
     return path
@@ -153,14 +162,18 @@ def make_mock_supabase(existing_data=None):
         return chain
 
     mock.table.return_value.select.side_effect = select_side
-    mock.table.return_value.insert.return_value.execute.return_value.data = [{"id": "new"}]
+    mock.table.return_value.insert.return_value.execute.return_value.data = [
+        {"id": "new"}
+    ]
     return mock
 
 
 class TestImportSteps:
     def test_steps_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO StepsRecord (start_time, end_time, count) VALUES (1700000000000, 17000086400000, 8500)")
+        db.execute(
+            "INSERT INTO StepsRecord (start_time, end_time, count) VALUES (1700000000000, 17000086400000, 8500)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -180,7 +193,9 @@ class TestImportSteps:
 
     def test_steps_fingerprint_dedup(self):
         db = create_hc_db()
-        db.execute("INSERT INTO StepsRecord (start_time, end_time, count) VALUES (1700000000000, 17000086400000, 8500)")
+        db.execute(
+            "INSERT INTO StepsRecord (start_time, end_time, count) VALUES (1700000000000, 17000086400000, 8500)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -197,7 +212,9 @@ class TestImportSteps:
 class TestImportSleep:
     def test_sleep_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO SleepSessionRecord (start_time, end_time, stages) VALUES (1699970000000, 1700000000000, 'deep,light,rem')")
+        db.execute(
+            "INSERT INTO SleepSessionRecord (start_time, end_time, stages) VALUES (1699970000000, 1700000000000, 'deep,light,rem')"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -218,7 +235,9 @@ class TestImportSleep:
 class TestImportExercise:
     def test_exercise_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO ExerciseSessionRecord (start_time, end_time, exercise_type, calories, title) VALUES (1700000000000, 1700003600000, 'running', 350.0, 'Morning Run')")
+        db.execute(
+            "INSERT INTO ExerciseSessionRecord (start_time, end_time, exercise_type, calories, title) VALUES (1700000000000, 1700003600000, 'running', 350.0, 'Morning Run')"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -239,7 +258,9 @@ class TestImportExercise:
 class TestImportHeartRate:
     def test_heart_rate_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO HeartRateRecord (time, beats_per_minute) VALUES (1700000000000, 72)")
+        db.execute(
+            "INSERT INTO HeartRateRecord (time, beats_per_minute) VALUES (1700000000000, 72)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -260,7 +281,9 @@ class TestImportHeartRate:
 class TestImportWeight:
     def test_weight_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO WeightRecord (time, weight) VALUES (1700000000000, 80.5)")
+        db.execute(
+            "INSERT INTO WeightRecord (time, weight) VALUES (1700000000000, 80.5)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -281,7 +304,9 @@ class TestImportWeight:
 class TestImportBloodPressure:
     def test_blood_pressure_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO BloodPressureRecord (time, systolic, diastolic) VALUES (1700000000000, 120.0, 80.0)")
+        db.execute(
+            "INSERT INTO BloodPressureRecord (time, systolic, diastolic) VALUES (1700000000000, 120.0, 80.0)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -302,7 +327,9 @@ class TestImportBloodPressure:
 class TestImportNutrition:
     def test_water_import(self):
         db = create_hc_db()
-        db.execute("INSERT INTO NutritionRecord (start_time, volume) VALUES (1700000000000, 500.0)")
+        db.execute(
+            "INSERT INTO NutritionRecord (start_time, volume) VALUES (1700000000000, 500.0)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -320,7 +347,9 @@ class TestImportNutrition:
 
     def test_nutrition_import_with_macros(self):
         db = create_hc_db()
-        db.execute("INSERT INTO NutritionRecord (start_time, energy, protein, fat_total, carbs_total) VALUES (1700000000000, 2200.0, 150.0, 70.0, 250.0)")
+        db.execute(
+            "INSERT INTO NutritionRecord (start_time, energy, protein, fat_total, carbs_total) VALUES (1700000000000, 2200.0, 150.0, 70.0, 250.0)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)
@@ -329,8 +358,11 @@ class TestImportNutrition:
         imported, skipped = import_nutrition(conn, mock_supabase)
 
         assert imported >= 1
-        nutrition_calls = [c for c in mock_supabase.table.return_value.insert.call_args_list
-                           if c[0][0].get("entry_type") == "nutrition"]
+        nutrition_calls = [
+            c
+            for c in mock_supabase.table.return_value.insert.call_args_list
+            if c[0][0].get("entry_type") == "nutrition"
+        ]
         assert len(nutrition_calls) == 1
         record = nutrition_calls[0][0][0]
         assert record["value"]["protein"] == 150.0
@@ -357,7 +389,9 @@ class TestMissingFields:
 
     def test_none_fields_handled_gracefully(self):
         db = create_hc_db()
-        db.execute("INSERT INTO WeightRecord (time, weight, weight_kg) VALUES (1700000000000, NULL, NULL)")
+        db.execute(
+            "INSERT INTO WeightRecord (time, weight, weight_kg) VALUES (1700000000000, NULL, NULL)"
+        )
         db.commit()
         path = save_db_to_file(db)
         conn = sqlite3.connect(path)

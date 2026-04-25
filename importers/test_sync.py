@@ -1,9 +1,7 @@
 import os
 import sys
 import importlib.util
-import pytest
-from unittest.mock import patch, MagicMock, MagicMock as MockModule, call
-from hashlib import sha256
+from unittest.mock import patch, MagicMock, MagicMock as MockModule
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,15 +12,22 @@ if "supabase" not in sys.modules:
 
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-_spec = importlib.util.spec_from_file_location("importers.shared", os.path.join(_base, "importers", "shared.py"))
+_spec = importlib.util.spec_from_file_location(
+    "importers.shared", os.path.join(_base, "importers", "shared.py")
+)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["importers.shared"] = _mod
 _spec.loader.exec_module(_mod)
 
 sys.modules["importers.health_connect"] = type(sys)("importers.health_connect")
-sys.modules["importers.health_connect"].__path__ = [os.path.join(_base, "importers", "health-connect")]
+sys.modules["importers.health_connect"].__path__ = [
+    os.path.join(_base, "importers", "health-connect")
+]
 
-_spec = importlib.util.spec_from_file_location("importers.health_connect.sync", os.path.join(_base, "importers", "health-connect", "sync.py"))
+_spec = importlib.util.spec_from_file_location(
+    "importers.health_connect.sync",
+    os.path.join(_base, "importers", "health-connect", "sync.py"),
+)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["importers.health_connect.sync"] = _mod
 sys.modules["importers.health_connect"].sync = _mod
@@ -48,58 +53,82 @@ def make_mock_creds():
 def make_mock_supabase():
     mock = MagicMock()
     mock.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
-    mock.table.return_value.insert.return_value.execute.return_value.data = [{"id": "new"}]
+    mock.table.return_value.insert.return_value.execute.return_value.data = [
+        {"id": "new"}
+    ]
     return mock
 
 
 AGGREGATE_RESPONSE_STEPS = {
-    "bucket": [{
-        "dataset": [{
-            "point": [{
-                "startTimeNanos": "1700000000000000000",
-                "value": [{"intVal": 8500}]
-            }]
-        }]
-    }]
+    "bucket": [
+        {
+            "dataset": [
+                {
+                    "point": [
+                        {
+                            "startTimeNanos": "1700000000000000000",
+                            "value": [{"intVal": 8500}],
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
 }
 
 AGGREGATE_RESPONSE_WEIGHT = {
-    "bucket": [{
-        "dataset": [{
-            "point": [{
-                "startTimeNanos": "1700000000000000000",
-                "value": [{"fpVal": 80.5}]
-            }]
-        }]
-    }]
+    "bucket": [
+        {
+            "dataset": [
+                {
+                    "point": [
+                        {
+                            "startTimeNanos": "1700000000000000000",
+                            "value": [{"fpVal": 80.5}],
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
 }
 
 AGGREGATE_RESPONSE_HR = {
-    "bucket": [{
-        "dataset": [{
-            "point": [{
-                "startTimeNanos": "1700000000000000000",
-                "value": [{"fpVal": 72.3}]
-            }]
-        }]
-    }]
+    "bucket": [
+        {
+            "dataset": [
+                {
+                    "point": [
+                        {
+                            "startTimeNanos": "1700000000000000000",
+                            "value": [{"fpVal": 72.3}],
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
 }
 
 SLEEP_SESSIONS_RESPONSE = {
-    "session": [{
-        "startTimeMillis": "1699970000000",
-        "endTimeMillis": "1700000000000",
-        "name": "Night Sleep"
-    }]
+    "session": [
+        {
+            "startTimeMillis": "1699970000000",
+            "endTimeMillis": "1700000000000",
+            "name": "Night Sleep",
+        }
+    ]
 }
 
 EXERCISE_SESSIONS_RESPONSE = {
-    "session": [{
-        "startTimeMillis": "1700000000000",
-        "endTimeMillis": "1700003600000",
-        "name": "Running",
-        "activityType": 8
-    }]
+    "session": [
+        {
+            "startTimeMillis": "1700000000000",
+            "endTimeMillis": "1700003600000",
+            "name": "Running",
+            "activityType": 8,
+        }
+    ]
 }
 
 
@@ -125,7 +154,9 @@ class TestSyncSteps:
         mock_agg.return_value = AGGREGATE_RESPONSE_STEPS
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
 
         imported, skipped = sync_steps(creds, supabase, 1699900000000, 1700100000000)
 
@@ -165,7 +196,9 @@ class TestSyncWeight:
         mock_agg.return_value = AGGREGATE_RESPONSE_WEIGHT
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
 
         imported, skipped = sync_weight(creds, supabase, 1699900000000, 1700100000000)
 
@@ -180,7 +213,9 @@ class TestSyncHeartRate:
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
-        imported, skipped = sync_heart_rate(creds, supabase, 1699900000000, 1700100000000)
+        imported, skipped = sync_heart_rate(
+            creds, supabase, 1699900000000, 1700100000000
+        )
 
         assert imported == 1
         insert_calls = supabase.table.return_value.insert.call_args_list
@@ -194,9 +229,13 @@ class TestSyncHeartRate:
         mock_agg.return_value = AGGREGATE_RESPONSE_HR
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
 
-        imported, skipped = sync_heart_rate(creds, supabase, 1699900000000, 1700100000000)
+        imported, skipped = sync_heart_rate(
+            creds, supabase, 1699900000000, 1700100000000
+        )
 
         assert imported == 0
         assert skipped == 1
@@ -226,7 +265,9 @@ class TestSyncSleep:
         mock_sleep.return_value = SLEEP_SESSIONS_RESPONSE
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
 
         imported, skipped = sync_sleep(creds, supabase, 1699900000000, 1700100000000)
 
@@ -294,7 +335,9 @@ class TestSyncExercise:
 
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
 
         imported, skipped = sync_exercise(creds, supabase, 1699900000000, 1700100000000)
 

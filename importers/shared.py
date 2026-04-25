@@ -58,8 +58,17 @@ def upsert_record(supabase, table, record, source, external_id):
     return supabase.table(table).insert(record).execute()
 
 
-def record_sync(supabase, source, sync_type="full", processed=0, imported=0,
-                skipped=0, failed=0, started_at=None, error=None):
+def record_sync(
+    supabase,
+    source,
+    sync_type="full",
+    processed=0,
+    imported=0,
+    skipped=0,
+    failed=0,
+    started_at=None,
+    error=None,
+):
     try:
         row = {
             "source": source,
@@ -121,7 +130,11 @@ def extract_numeric_value(entry_type, value):
         for k in ("duration_min", "calories", "duration_s"):
             if k in value and value[k] is not None:
                 try:
-                    return round(float(value[k]), 1) if k != "duration_s" else round(float(value[k]) / 60, 1)
+                    return (
+                        round(float(value[k]), 1)
+                        if k != "duration_s"
+                        else round(float(value[k]) / 60, 1)
+                    )
                 except (ValueError, TypeError):
                     continue
     return None

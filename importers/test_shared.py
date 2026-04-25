@@ -22,12 +22,19 @@ from importers.shared import (
 
 
 class TestConnectSupabase:
-    @patch.dict(os.environ, {"SUPABASE_URL": "https://test.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "key123"})
+    @patch.dict(
+        os.environ,
+        {
+            "SUPABASE_URL": "https://test.supabase.co",
+            "SUPABASE_SERVICE_ROLE_KEY": "key123",
+        },
+    )
     @patch("supabase.create_client")
     def test_creates_client_with_env_vars(self, mock_create):
         # Reload shared to pick up the patched create_client
         import importlib
         import shared as shared_mod
+
         importlib.reload(shared_mod)
         shared_mod.connect_supabase()
         mock_create.assert_called_once_with("https://test.supabase.co", "key123")
@@ -50,17 +57,25 @@ class TestConnectSupabase:
 class TestDedupByExternalId:
     def test_returns_true_when_exists(self):
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
-        assert dedup_by_external_id(mock_supabase, "health_entries", "hc", "ext1") is True
+        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
+        assert (
+            dedup_by_external_id(mock_supabase, "health_entries", "hc", "ext1") is True
+        )
 
     def test_returns_false_when_not_exists(self):
         mock_supabase = MagicMock()
         mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
-        assert dedup_by_external_id(mock_supabase, "health_entries", "hc", "ext2") is False
+        assert (
+            dedup_by_external_id(mock_supabase, "health_entries", "hc", "ext2") is False
+        )
 
     def test_returns_false_when_external_id_is_none(self):
         mock_supabase = MagicMock()
-        assert dedup_by_external_id(mock_supabase, "health_entries", "hc", None) is False
+        assert (
+            dedup_by_external_id(mock_supabase, "health_entries", "hc", None) is False
+        )
         mock_supabase.table.assert_not_called()
 
     def test_returns_false_when_external_id_is_empty(self):
@@ -71,7 +86,9 @@ class TestDedupByExternalId:
 class TestUpsertRecord:
     def test_insert_when_no_external_id(self):
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [{"id": "1"}]
+        mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
         record = {"name": "test"}
         result = upsert_record(mock_supabase, "health_entries", record, "hc", None)
         mock_supabase.table.return_value.insert.assert_called_once_with(record)
@@ -80,7 +97,9 @@ class TestUpsertRecord:
     def test_insert_when_external_id_and_no_existing(self):
         mock_supabase = MagicMock()
         mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
-        mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [{"id": "2"}]
+        mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [
+            {"id": "2"}
+        ]
         record = {"name": "test"}
         result = upsert_record(mock_supabase, "health_entries", record, "hc", "ext1")
         mock_supabase.table.return_value.insert.assert_called_once_with(record)
@@ -88,8 +107,12 @@ class TestUpsertRecord:
 
     def test_update_when_external_id_and_existing(self):
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
-        mock_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value.data = [{"id": "1"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
+        mock_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "1"}
+        ]
         record = {"name": "updated"}
         result = upsert_record(mock_supabase, "health_entries", record, "hc", "ext1")
         mock_supabase.table.return_value.update.assert_called_once_with(record)
@@ -118,7 +141,9 @@ class TestRecordSync:
 
     def test_catches_exception_gracefully(self):
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.insert.return_value.execute.side_effect = Exception("db error")
+        mock_supabase.table.return_value.insert.return_value.execute.side_effect = (
+            Exception("db error")
+        )
         record_sync(mock_supabase, "iron-log")
 
     def test_includes_started_at_when_provided(self):

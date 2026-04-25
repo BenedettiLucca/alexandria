@@ -39,11 +39,14 @@ def import_sessions(db_path, supabase):
     skipped = 0
 
     for session in sessions:
-        sets = conn.execute("""
+        sets = conn.execute(
+            """
             SELECT * FROM sets
             WHERE session_id = ?
             ORDER BY exercise_name, set_number
-        """, (session["id"],)).fetchall()
+        """,
+            (session["id"],),
+        ).fetchall()
 
         exercises_by_name = {}
         for s in sets:
@@ -53,21 +56,21 @@ def import_sessions(db_path, supabase):
                     "name": name,
                     "sets": [],
                 }
-            exercises_by_name[name]["sets"].append({
-                "set_number": s["set_number"],
-                "weight_kg": s["weight_kg"],
-                "reps": s["reps"],
-                "duration_s": s["duration_seconds"],
-                "rir": s["rir"],
-                "is_warmup": bool(s["is_warmup"]),
-            })
+            exercises_by_name[name]["sets"].append(
+                {
+                    "set_number": s["set_number"],
+                    "weight_kg": s["weight_kg"],
+                    "reps": s["reps"],
+                    "duration_s": s["duration_seconds"],
+                    "rir": s["rir"],
+                    "is_warmup": bool(s["is_warmup"]),
+                }
+            )
 
         exercises = list(exercises_by_name.values())
 
         total_volume = sum(
-            (s["weight_kg"] or 0) * (s["reps"] or 0)
-            for s in sets
-            if not s["is_warmup"]
+            (s["weight_kg"] or 0) * (s["reps"] or 0) for s in sets if not s["is_warmup"]
         )
 
         workout_date = format_date(session["start_time"])
@@ -82,12 +85,15 @@ def import_sessions(db_path, supabase):
             skipped += 1
             continue
 
-        exercise_types = conn.execute("""
+        exercise_types = conn.execute(
+            """
             SELECT DISTINCT e.type
             FROM sets s
             JOIN exercises e ON s.exercise_id = e.id
             WHERE s.session_id = ?
-        """, (session["id"],)).fetchall()
+        """,
+            (session["id"],),
+        ).fetchall()
 
         has_cardio = any(t["type"] == "duration" for t in exercise_types)
         has_strength = any(t["type"] == "strength" for t in exercise_types)
@@ -136,7 +142,9 @@ def import_sessions(db_path, supabase):
         print(f"  Imported: {workout_date} - {name} ({len(sets)} sets)")
 
     conn.close()
-    print(f"\nSessions: {imported} imported, {skipped} skipped (already exist or invalid)")
+    print(
+        f"\nSessions: {imported} imported, {skipped} skipped (already exist or invalid)"
+    )
     return imported, skipped
 
 
@@ -144,9 +152,7 @@ def import_body_metrics(db_path, supabase):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    metrics = conn.execute(
-        "SELECT * FROM body_metrics ORDER BY date"
-    ).fetchall()
+    metrics = conn.execute("SELECT * FROM body_metrics ORDER BY date").fetchall()
 
     imported = 0
     skipped = 0
@@ -160,9 +166,7 @@ def import_body_metrics(db_path, supabase):
         ext_id = str(m["date"])
 
         if m["weight"]:
-            fingerprint = sha256(
-                f"ironlog-weight-{m['date']}".encode()
-            ).hexdigest()
+            fingerprint = sha256(f"ironlog-weight-{m['date']}".encode()).hexdigest()
 
             record = {
                 "entry_type": "weight",
@@ -200,7 +204,9 @@ def import_body_metrics(db_path, supabase):
                 "metadata": {"import_fingerprint": fingerprint, "type": m["type"]},
             }
 
-            upsert_record(supabase, "health_entries", record, "iron-log", measurements_ext_id)
+            upsert_record(
+                supabase, "health_entries", record, "iron-log", measurements_ext_id
+            )
             imported += 1
 
     conn.close()
@@ -232,8 +238,14 @@ def main():
     total_skipped = s_skipped + m_skipped
     total_processed = total_imported + total_skipped
 
-    record_sync(supabase, "iron-log", started_at=start_time, processed=total_processed,
-                imported=total_imported, skipped=total_skipped)
+    record_sync(
+        supabase,
+        "iron-log",
+        started_at=start_time,
+        processed=total_processed,
+        imported=total_imported,
+        skipped=total_skipped,
+    )
 
     print("\nDone!")
 
