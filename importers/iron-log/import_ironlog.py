@@ -8,55 +8,20 @@ Supabase backend via the REST API.
 Requirements: pip install supabase requests
 """
 
-import json
 import sys
 import os
 import sqlite3
 from datetime import datetime, timezone
 from hashlib import sha256
 
-try:
-    from supabase import create_client
-except ImportError:
-    print("pip install supabase")
-    sys.exit(1)
-
-
-def connect_supabase():
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars")
-        sys.exit(1)
-    return create_client(url, key)
-
-
-def epoch_to_iso(epoch_ms):
-    if not epoch_ms:
-        return None
-    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).isoformat()
-
-
-def epoch_to_date(epoch_ms):
-    if not epoch_ms:
-        return None
-    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-
-
-def record_sync(supabase, source, started_at, processed, imported, skipped):
-    try:
-        supabase.table("sync_log").insert({
-            "source": source,
-            "sync_type": "full",
-            "records_processed": processed,
-            "records_imported": imported,
-            "records_skipped": skipped,
-            "status": "completed",
-            "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
-    except Exception as e:
-        print(f"  Warning: failed to record sync_log: {e}")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from importers.shared import (
+    connect_supabase,
+    upsert_record,
+    record_sync,
+    format_timestamp,
+    format_date,
+)
 
 
 def import_sessions(db_path, supabase):
@@ -105,20 +70,15 @@ def import_sessions(db_path, supabase):
             if not s["is_warmup"]
         )
 
-        workout_date = epoch_to_date(session["start_time"])
+        workout_date = format_date(session["start_time"])
         if not workout_date:
             skipped += 1
             continue
 
-        fingerprint = sha256(
-            f"ironlog-session-{session['id']}-{workout_date}".encode()
-        ).hexdigest()
+        external_id = str(session["id"])
 
-        existing = supabase.table("training_logs").select("id").contains(
-            "metadata", {"import_fingerprint": fingerprint}
-        ).execute()
-
-        if existing.data:
+        if upsert_record(supabase, "training_logs", {}, "iron-log", external_id).data:
+            # Existing record found by upsert, skip
             skipped += 1
             continue
 
@@ -145,7 +105,11 @@ def import_sessions(db_path, supabase):
         elif session["duration_minutes"]:
             duration_s = session["duration_minutes"] * 60
 
-        result = supabase.table("training_logs").insert({
+        fingerprint = sha256(
+            f"ironlog-session-{session['id']}-{workout_date}".encode()
+        ).hexdigest()
+
+        record = {
             "workout_date": workout_date,
             "workout_type": workout_type,
             "name": name,
@@ -155,9 +119,9 @@ def import_sessions(db_path, supabase):
             "rpe": session["s_rpe"],
             "notes": session["notes"],
             "tags": ["iron-log", workout_type],
-            "event_time": epoch_to_iso(session["start_time"]),
+            "event_time": format_timestamp(session["start_time"]),
             "ingestion_source": "iron-log",
-            "external_id": str(session["id"]),
+            "external_id": external_id,
             "metadata": {
                 "import_fingerprint": fingerprint,
                 "source": "iron-log",
@@ -165,8 +129,9 @@ def import_sessions(db_path, supabase):
                 "body_weight": session["body_weight"],
                 "set_count": len(sets),
             },
-        }).execute()
+        }
 
+        upsert_record(supabase, "training_logs", record, "iron-log", external_id)
         imported += 1
         print(f"  Imported: {workout_date} - {name} ({len(sets)} sets)")
 
@@ -187,7 +152,7 @@ def import_body_metrics(db_path, supabase):
     skipped = 0
 
     for m in metrics:
-        ts = epoch_to_iso(m["date"])
+        ts = format_timestamp(m["date"])
         if not ts:
             skipped += 1
             continue
@@ -199,53 +164,48 @@ def import_body_metrics(db_path, supabase):
                 f"ironlog-weight-{m['date']}".encode()
             ).hexdigest()
 
-            existing = supabase.table("health_entries").select("id").contains(
-                "metadata", {"import_fingerprint": fingerprint}
-            ).execute()
+            record = {
+                "entry_type": "weight",
+                "timestamp": ts,
+                "event_time": ts,
+                "numeric_value": m["weight"],
+                "value": {"weight_kg": m["weight"]},
+                "source": "iron-log",
+                "ingestion_source": "iron-log",
+                "external_id": ext_id,
+                "tags": ["iron-log"],
+                "metadata": {"import_fingerprint": fingerprint},
+            }
 
-            if not existing.data:
-                supabase.table("health_entries").insert({
-                    "entry_type": "weight",
-                    "timestamp": ts,
-                    "event_time": ts,
-                    "numeric_value": m["weight"],
-                    "value": {"weight_kg": m["weight"]},
-                    "source": "iron-log",
-                    "ingestion_source": "iron-log",
-                    "external_id": ext_id,
-                    "tags": ["iron-log"],
-                    "metadata": {"import_fingerprint": fingerprint},
-                }).execute()
-                imported += 1
+            upsert_record(supabase, "health_entries", record, "iron-log", ext_id)
+            imported += 1
 
         if any([m["waist"], m["arm_right"], m["thigh_right"], m["chest"], m["calf"]]):
             fingerprint = sha256(
                 f"ironlog-measurements-{m['date']}".encode()
             ).hexdigest()
 
-            existing = supabase.table("health_entries").select("id").contains(
-                "metadata", {"import_fingerprint": fingerprint}
-            ).execute()
+            measurements = {}
+            for field in ["waist", "arm_right", "thigh_right", "chest", "calf"]:
+                if m[field]:
+                    measurements[field] = m[field]
 
-            if not existing.data:
-                measurements = {}
-                for field in ["waist", "arm_right", "thigh_right", "chest", "calf"]:
-                    if m[field]:
-                        measurements[field] = m[field]
+            measurements_ext_id = f"{ext_id}-measurements"
+            record = {
+                "entry_type": "body_composition",
+                "timestamp": ts,
+                "event_time": ts,
+                "numeric_value": m["weight"] if m["weight"] else None,
+                "value": measurements,
+                "source": "iron-log",
+                "ingestion_source": "iron-log",
+                "external_id": measurements_ext_id,
+                "tags": ["iron-log", "body-measurements"],
+                "metadata": {"import_fingerprint": fingerprint, "type": m["type"]},
+            }
 
-                supabase.table("health_entries").insert({
-                    "entry_type": "body_composition",
-                    "timestamp": ts,
-                    "event_time": ts,
-                    "numeric_value": m["weight"] if m["weight"] else None,
-                    "value": measurements,
-                    "source": "iron-log",
-                    "ingestion_source": "iron-log",
-                    "external_id": f"{ext_id}-measurements",
-                    "tags": ["iron-log", "body-measurements"],
-                    "metadata": {"import_fingerprint": fingerprint, "type": m["type"]},
-                }).execute()
-                imported += 1
+            upsert_record(supabase, "health_entries", record, "iron-log", measurements_ext_id)
+            imported += 1
 
     conn.close()
     print(f"Body metrics: {imported} imported, {skipped} skipped")
@@ -276,7 +236,8 @@ def main():
     total_skipped = s_skipped + m_skipped
     total_processed = total_imported + total_skipped
 
-    record_sync(supabase, "iron-log", start_time, total_processed, total_imported, total_skipped)
+    record_sync(supabase, "iron-log", started_at=start_time, processed=total_processed,
+                imported=total_imported, skipped=total_skipped)
 
     print("\nDone!")
 

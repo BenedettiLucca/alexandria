@@ -11,7 +11,6 @@ for each record type (StepsRecord, SleepSessionRecord, etc)
 Requirements: pip install supabase
 """
 
-import json
 import sys
 import os
 import sqlite3
@@ -20,20 +19,16 @@ import zipfile
 from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 
-try:
-    from supabase import create_client
-except ImportError:
-    print("pip install supabase")
-    sys.exit(1)
-
-
-def connect_supabase():
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars")
-        sys.exit(1)
-    return create_client(url, key)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from importers.shared import (
+    connect_supabase,
+    dedup_by_external_id,
+    upsert_record,
+    record_sync,
+    format_timestamp,
+    format_date,
+    extract_numeric_value,
+)
 
 
 def find_db(export_path):
@@ -76,34 +71,6 @@ def dedup(supabase, fingerprint):
     return bool(existing.data)
 
 
-def ms_to_iso(ms):
-    if not ms:
-        return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
-
-
-def epoch_to_date(epoch_ms):
-    if not epoch_ms:
-        return None
-    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-
-
-def record_sync(supabase, source, started_at, processed, imported, skipped):
-    try:
-        supabase.table("sync_log").insert({
-            "source": source,
-            "sync_type": "full",
-            "records_processed": processed,
-            "records_imported": imported,
-            "records_skipped": skipped,
-            "status": "completed",
-            "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
-    except Exception as e:
-        print(f"  Warning: failed to record sync_log: {e}")
-
-
 # ====================================================================
 # RECORD TYPE IMPORTERS
 # ====================================================================
@@ -132,11 +99,12 @@ def import_steps(conn, supabase):
             if not count or not start:
                 continue
 
-            ts = ms_to_iso(start)
-            date_str = epoch_to_date(start)
+            ts = format_timestamp(start)
+            date_str = format_date(start)
             fingerprint = sha256(f"hc-steps-{date_str}".encode()).hexdigest()
+            external_id = fingerprint
 
-            if dedup(supabase, fingerprint):
+            if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                 skipped += 1
                 continue
 
@@ -144,19 +112,21 @@ def import_steps(conn, supabase):
             if end and start:
                 duration_s = int((end - start) / 1000)
 
-            supabase.table("health_entries").insert({
+            value = {"count": int(count)}
+
+            upsert_record(supabase, "health_entries", {
                 "entry_type": "steps",
                 "timestamp": ts,
                 "event_time": ts,
-                "numeric_value": int(count),
+                "numeric_value": extract_numeric_value("steps", value),
                 "duration_s": duration_s,
-                "value": {"count": int(count)},
+                "value": value,
                 "source": "health-connect",
                 "ingestion_source": "health-connect",
-                "external_id": fingerprint,
+                "external_id": external_id,
                 "tags": ["health-connect", "steps"],
                 "metadata": {"import_fingerprint": fingerprint},
-            }).execute()
+            }, "health-connect", external_id)
             imported += 1
 
     print(f"  Steps: {imported} entries imported, {skipped} skipped")
@@ -184,13 +154,14 @@ def import_sleep(conn, supabase):
             if not start or not end:
                 continue
 
-            start_iso = ms_to_iso(start)
-            end_iso = ms_to_iso(end)
+            start_iso = format_timestamp(start)
+            end_iso = format_timestamp(end)
             duration_s = int((end - start) / 1000)
             duration_hours = round(duration_s / 3600, 1)
 
             fingerprint = sha256(f"hc-sleep-{start}-{end}".encode()).hexdigest()
-            if dedup(supabase, fingerprint):
+            external_id = fingerprint
+            if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                 skipped += 1
                 continue
 
@@ -198,19 +169,19 @@ def import_sleep(conn, supabase):
             if rec.get("stages") or rec.get("sleep_stage"):
                 value["stages"] = rec.get("stages") or rec.get("sleep_stage")
 
-            supabase.table("health_entries").insert({
+            upsert_record(supabase, "health_entries", {
                 "entry_type": "sleep",
                 "timestamp": start_iso,
                 "event_time": start_iso,
-                "numeric_value": duration_hours,
+                "numeric_value": extract_numeric_value("sleep", value),
                 "duration_s": duration_s,
                 "value": value,
                 "source": "health-connect",
                 "ingestion_source": "health-connect",
-                "external_id": fingerprint,
+                "external_id": external_id,
                 "tags": ["health-connect", "sleep"],
                 "metadata": {"import_fingerprint": fingerprint},
-            }).execute()
+            }, "health-connect", external_id)
             imported += 1
 
     print(f"  Sleep: {imported} entries imported, {skipped} skipped")
@@ -238,11 +209,12 @@ def import_exercise(conn, supabase):
             if not start:
                 continue
 
-            start_iso = ms_to_iso(start)
+            start_iso = format_timestamp(start)
             exercise_type = str(rec.get("exercise_type", rec.get("type", "other")))
 
             fingerprint = sha256(f"hc-exercise-{start}-{exercise_type}".encode()).hexdigest()
-            if dedup(supabase, fingerprint):
+            external_id = fingerprint
+            if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                 skipped += 1
                 continue
 
@@ -260,7 +232,7 @@ def import_exercise(conn, supabase):
             calories = rec.get("calories") or rec.get("calorie")
             numeric_value = round(duration_s / 60, 1) if duration_s else (float(calories) if calories else None)
 
-            supabase.table("health_entries").insert({
+            upsert_record(supabase, "health_entries", {
                 "entry_type": "exercise",
                 "timestamp": start_iso,
                 "event_time": start_iso,
@@ -269,10 +241,10 @@ def import_exercise(conn, supabase):
                 "value": {k: v for k, v in value.items() if v is not None},
                 "source": "health-connect",
                 "ingestion_source": "health-connect",
-                "external_id": fingerprint,
+                "external_id": external_id,
                 "tags": ["health-connect", "exercise"],
                 "metadata": {"import_fingerprint": fingerprint},
-            }).execute()
+            }, "health-connect", external_id)
             imported += 1
 
     print(f"  Exercise: {imported} entries imported, {skipped} skipped")
@@ -300,24 +272,27 @@ def import_heart_rate(conn, supabase):
             if not bpm or not ts_raw:
                 continue
 
-            ts = ms_to_iso(ts_raw)
+            ts = format_timestamp(ts_raw)
             fingerprint = sha256(f"hc-hr-{ts_raw}".encode()).hexdigest()
-            if dedup(supabase, fingerprint):
+            external_id = fingerprint
+            if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                 skipped += 1
                 continue
 
-            supabase.table("health_entries").insert({
+            value = {"bpm": int(bpm)}
+
+            upsert_record(supabase, "health_entries", {
                 "entry_type": "heart_rate",
                 "timestamp": ts,
                 "event_time": ts,
-                "numeric_value": int(bpm),
-                "value": {"bpm": int(bpm)},
+                "numeric_value": extract_numeric_value("heart_rate", value),
+                "value": value,
                 "source": "health-connect",
                 "ingestion_source": "health-connect",
-                "external_id": fingerprint,
+                "external_id": external_id,
                 "tags": ["health-connect", "heart-rate"],
                 "metadata": {"import_fingerprint": fingerprint},
-            }).execute()
+            }, "health-connect", external_id)
             imported += 1
 
     print(f"  Heart rate: {imported} entries imported, {skipped} skipped")
@@ -345,24 +320,27 @@ def import_weight(conn, supabase):
             if not weight or not ts_raw:
                 continue
 
-            ts = ms_to_iso(ts_raw)
+            ts = format_timestamp(ts_raw)
             fingerprint = sha256(f"hc-weight-{ts_raw}".encode()).hexdigest()
-            if dedup(supabase, fingerprint):
+            external_id = fingerprint
+            if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                 skipped += 1
                 continue
 
-            supabase.table("health_entries").insert({
+            value = {"weight_kg": float(weight)}
+
+            upsert_record(supabase, "health_entries", {
                 "entry_type": "weight",
                 "timestamp": ts,
                 "event_time": ts,
-                "numeric_value": float(weight),
-                "value": {"weight_kg": float(weight)},
+                "numeric_value": extract_numeric_value("weight", value),
+                "value": value,
                 "source": "health-connect",
                 "ingestion_source": "health-connect",
-                "external_id": fingerprint,
+                "external_id": external_id,
                 "tags": ["health-connect", "weight"],
                 "metadata": {"import_fingerprint": fingerprint},
-            }).execute()
+            }, "health-connect", external_id)
             imported += 1
 
     print(f"  Weight: {imported} entries imported, {skipped} skipped")
@@ -391,9 +369,10 @@ def import_blood_pressure(conn, supabase):
             if not ts_raw:
                 continue
 
-            ts = ms_to_iso(ts_raw)
+            ts = format_timestamp(ts_raw)
             fingerprint = sha256(f"hc-bp-{ts_raw}".encode()).hexdigest()
-            if dedup(supabase, fingerprint):
+            external_id = fingerprint
+            if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                 skipped += 1
                 continue
 
@@ -403,18 +382,18 @@ def import_blood_pressure(conn, supabase):
             if diastolic:
                 value["diastolic"] = float(diastolic)
 
-            supabase.table("health_entries").insert({
+            upsert_record(supabase, "health_entries", {
                 "entry_type": "blood_pressure",
                 "timestamp": ts,
                 "event_time": ts,
-                "numeric_value": float(systolic) if systolic else float(diastolic) if diastolic else None,
+                "numeric_value": extract_numeric_value("blood_pressure", value),
                 "value": value,
                 "source": "health-connect",
                 "ingestion_source": "health-connect",
-                "external_id": fingerprint,
+                "external_id": external_id,
                 "tags": ["health-connect", "blood-pressure"],
                 "metadata": {"import_fingerprint": fingerprint},
-            }).execute()
+            }, "health-connect", external_id)
             imported += 1
 
     print(f"  Blood pressure: {imported} entries imported, {skipped} skipped")
@@ -442,32 +421,35 @@ def import_nutrition(conn, supabase):
             if not ts_raw:
                 continue
 
-            ts = ms_to_iso(ts_raw)
+            ts = format_timestamp(ts_raw)
 
             volume = rec.get("volume") or rec.get("water") or rec.get("hydration")
             if volume:
                 fingerprint = sha256(f"hc-water-{ts_raw}".encode()).hexdigest()
-                if dedup(supabase, fingerprint):
+                external_id = fingerprint
+                if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                     skipped += 1
                 else:
-                    supabase.table("health_entries").insert({
+                    value = {"volume_ml": float(volume)}
+                    upsert_record(supabase, "health_entries", {
                         "entry_type": "water",
                         "timestamp": ts,
                         "event_time": ts,
                         "numeric_value": float(volume),
-                        "value": {"volume_ml": float(volume)},
+                        "value": value,
                         "source": "health-connect",
                         "ingestion_source": "health-connect",
-                        "external_id": fingerprint,
+                        "external_id": external_id,
                         "tags": ["health-connect", "water"],
                         "metadata": {"import_fingerprint": fingerprint},
-                    }).execute()
+                    }, "health-connect", external_id)
                     imported_water += 1
 
             energy = rec.get("energy") or rec.get("calories") or rec.get("energy_total")
             if energy:
                 fingerprint = sha256(f"hc-nutrition-{ts_raw}".encode()).hexdigest()
-                if dedup(supabase, fingerprint):
+                external_id = fingerprint
+                if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                     skipped += 1
                 else:
                     value = {"energy_kcal": float(energy)}
@@ -476,7 +458,7 @@ def import_nutrition(conn, supabase):
                         if rec.get(field):
                             value[field] = float(rec[field])
 
-                    supabase.table("health_entries").insert({
+                    upsert_record(supabase, "health_entries", {
                         "entry_type": "nutrition",
                         "timestamp": ts,
                         "event_time": ts,
@@ -484,10 +466,10 @@ def import_nutrition(conn, supabase):
                         "value": value,
                         "source": "health-connect",
                         "ingestion_source": "health-connect",
-                        "external_id": fingerprint,
+                        "external_id": external_id,
                         "tags": ["health-connect", "nutrition"],
                         "metadata": {"import_fingerprint": fingerprint},
-                    }).execute()
+                    }, "health-connect", external_id)
                     imported_food += 1
 
     print(f"  Water: {imported_water} entries imported")
@@ -537,7 +519,8 @@ def main():
     total_skipped = s_skip + sl_skip + e_skip + hr_skip + w_skip + bp_skip + n_skip
     total_processed = total_imported + total_skipped
 
-    record_sync(supabase, "health-connect", start_time, total_processed, total_imported, total_skipped)
+    record_sync(supabase, "health-connect", started_at=start_time, processed=total_processed,
+                imported=total_imported, skipped=total_skipped)
 
     conn.close()
     print("\nDone!")

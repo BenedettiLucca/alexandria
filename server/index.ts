@@ -72,6 +72,30 @@ function sanitizeClassification(raw: Record<string, unknown>): Record<string, un
   return { category, tags, people, importance, title, dates_mentioned: raw.dates_mentioned || [] };
 }
 
+function simpleClassify(text: string): Record<string, unknown> {
+  const lower = text.toLowerCase();
+  const defaults = { category: "note", tags: [], importance: 5, title: null, people: [], dates_mentioned: [] };
+
+  const rules: Array<[RegExp, string, string[], number?]> = [
+    [/\b(workout|exercise|gym|lifted|ran|running|training)\b/, "observation", ["fitness", "exercise"]],
+    [/\b(bug|error|fix|debug|crash|broken|failing)\b/, "task", ["coding", "bug"]],
+    [/\b(idea|what if|maybe we could|wouldn't it|imagine if)\b/, "idea", ["idea"]],
+    [/\b(decided|going to|we'll use|let's go with|agreed on)\b/, "decision", ["decision"]],
+    [/\b(recipe|cook|bake|baking|ingredients)\b/, "recipe", ["cooking"]],
+    [/\b(trip|travel|flight|hotel|vacation)\b/, "travel", ["travel"]],
+    [/\b(bought|purchased|ordered)\b/, "purchase", ["purchase"]],
+    [/\b(sarah said|met with|talked to|spoke with|chatted with)\b/, "note", ["people"]],
+  ];
+
+  for (const [pattern, category, tags] of rules) {
+    if (pattern.test(lower)) {
+      return { ...defaults, category, tags };
+    }
+  }
+
+  return defaults;
+}
+
 async function classifyMemory(text: string): Promise<Record<string, unknown>> {
   const defaults = { category: "note", tags: ["uncategorized"], importance: 5, title: "Untitled", people: [], dates_mentioned: [] };
   try {
@@ -195,10 +219,12 @@ server.registerTool(
   },
   async ({ content, title, category, importance, tags, people }) => {
     try {
-      const [embedding, classification] = await Promise.all([
-        getEmbedding(content),
-        classifyMemory(content),
-      ]);
+      const useLLM = content.length > 200 || importance === undefined;
+      const classification = useLLM
+        ? await classifyMemory(content)
+        : simpleClassify(content);
+
+      const embedding = await getEmbedding(content);
 
       const cl = classification as Record<string, unknown>;
       const finalCategory = category || (cl.category as string) || "note";
@@ -221,7 +247,7 @@ server.registerTool(
           p_people: allPeople,
           p_metadata: {
             dates_mentioned: cl.dates_mentioned || [],
-            auto_classified: !category, // true if AI-picked the category
+            auto_classified: !category,
           },
         }
       );
@@ -236,8 +262,9 @@ server.registerTool(
 
       if (embError) return err(`Embedding save failed: ${embError.message}`);
 
+      const classifier = useLLM ? "LLM" : "keyword";
       const status = upsertResult?.status === "updated" ? "Updated existing" : "Captured new";
-      let confirmation = `${status} memory as "${finalCategory}" (importance ${finalImportance}/10)`;
+      let confirmation = `${status} memory as "${finalCategory}" (importance ${finalImportance}/10, classified via ${classifier})`;
       if (allTags.length) confirmation += `\nTags: ${allTags.join(", ")}`;
       if (allPeople.length) confirmation += `\nPeople: ${allPeople.join(", ")}`;
 

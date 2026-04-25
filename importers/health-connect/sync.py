@@ -51,11 +51,14 @@ from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 from pathlib import Path
 
-try:
-    from supabase import create_client
-except ImportError:
-    print("pip install supabase")
-    sys.exit(1)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from importers.shared import (
+    connect_supabase,
+    dedup_by_external_id,
+    upsert_record,
+    record_sync,
+    format_timestamp,
+)
 
 # Google Health API data types mapped to Alexandria entry_type
 HEALTH_DATA_TYPES = {
@@ -153,8 +156,8 @@ def make_health_request(creds, data_type, start_ms, end_ms):
 
     params = urllib.parse.urlencode({
         "dataTypeName": data_type,
-        "startTime": datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).isoformat(),
-        "endTime": datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).isoformat(),
+        "startTime": format_timestamp(start_ms),
+        "endTime": format_timestamp(end_ms),
     })
 
     url = f"{base_url}/{data_type}/dataPoints?{params}"
@@ -198,8 +201,8 @@ def get_sleep_sessions(creds, start_ms, end_ms):
     """Get sleep sessions from the Fitness API."""
     import urllib.request
 
-    start_iso = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    end_iso = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.999Z")
+    start_iso = format_timestamp(start_ms)
+    end_iso = format_timestamp(end_ms)
 
     url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}&activityType=72"
 
@@ -212,19 +215,6 @@ def get_sleep_sessions(creds, start_ms, end_ms):
     except Exception as e:
         print(f"  Sleep session request failed: {e}")
         return None
-
-
-def dedup(supabase, fingerprint):
-    existing = supabase.table("health_entries").select("id").contains(
-        "metadata", {"import_fingerprint": fingerprint}
-    ).execute()
-    return bool(existing.data)
-
-
-def ms_to_iso(ms):
-    if not ms:
-        return None
-    return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).isoformat()
 
 
 def sync_steps(creds, supabase, start_ms, end_ms):
@@ -246,24 +236,27 @@ def sync_steps(creds, supabase, start_ms, end_ms):
                 if not count or not start:
                     continue
 
-                date_str = datetime.fromtimestamp(start / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-                fingerprint = sha256(f"ghc-steps-{date_str}".encode()).hexdigest()
-                if dedup(supabase, fingerprint):
+                date_str = format_date(start)
+                external_id = f"ghc-steps-{start}"
+                if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                     skipped += 1
                     continue
 
-                supabase.table("health_entries").insert({
+                fingerprint = sha256(f"ghc-steps-{date_str}".encode()).hexdigest()
+                value = {"count": count}
+
+                upsert_record(supabase, "health_entries", {
                     "entry_type": "steps",
-                    "timestamp": ms_to_iso(start),
-                    "event_time": ms_to_iso(start),
+                    "timestamp": format_timestamp(start),
+                    "event_time": format_timestamp(start),
                     "numeric_value": count,
-                    "value": {"count": count},
+                    "value": value,
                     "source": "health-connect",
                     "ingestion_source": "health-connect",
-                    "external_id": f"ghc-steps-{start}",
+                    "external_id": external_id,
                     "tags": ["health-connect", "steps"],
                     "metadata": {"import_fingerprint": fingerprint},
-                }).execute()
+                }, "health-connect", external_id)
                 imported += 1
 
     print(f"  Steps: {imported} imported, {skipped} skipped")
@@ -289,24 +282,27 @@ def sync_weight(creds, supabase, start_ms, end_ms):
                 if not weight or not start:
                     continue
 
-                fingerprint = sha256(f"ghc-weight-{start}".encode()).hexdigest()
-                if dedup(supabase, fingerprint):
+                external_id = f"ghc-weight-{start}"
+                if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                     skipped += 1
                     continue
 
+                fingerprint = sha256(f"ghc-weight-{start}".encode()).hexdigest()
                 weight_kg = round(float(weight), 2)
-                supabase.table("health_entries").insert({
+                value = {"weight_kg": weight_kg}
+
+                upsert_record(supabase, "health_entries", {
                     "entry_type": "weight",
-                    "timestamp": ms_to_iso(start),
-                    "event_time": ms_to_iso(start),
+                    "timestamp": format_timestamp(start),
+                    "event_time": format_timestamp(start),
                     "numeric_value": weight_kg,
-                    "value": {"weight_kg": weight_kg},
+                    "value": value,
                     "source": "health-connect",
                     "ingestion_source": "health-connect",
-                    "external_id": f"ghc-weight-{start}",
+                    "external_id": external_id,
                     "tags": ["health-connect", "weight"],
                     "metadata": {"import_fingerprint": fingerprint},
-                }).execute()
+                }, "health-connect", external_id)
                 imported += 1
 
     print(f"  Weight: {imported} imported, {skipped} skipped")
@@ -332,24 +328,27 @@ def sync_heart_rate(creds, supabase, start_ms, end_ms):
                 if not bpm or not start:
                     continue
 
-                fingerprint = sha256(f"ghc-hr-{start}".encode()).hexdigest()
-                if dedup(supabase, fingerprint):
+                external_id = f"ghc-heart_rate-{start}"
+                if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
                     skipped += 1
                     continue
 
+                fingerprint = sha256(f"ghc-hr-{start}".encode()).hexdigest()
                 bpm_rounded = round(float(bpm))
-                supabase.table("health_entries").insert({
+                value = {"bpm": bpm_rounded}
+
+                upsert_record(supabase, "health_entries", {
                     "entry_type": "heart_rate",
-                    "timestamp": ms_to_iso(start),
-                    "event_time": ms_to_iso(start),
+                    "timestamp": format_timestamp(start),
+                    "event_time": format_timestamp(start),
                     "numeric_value": bpm_rounded,
-                    "value": {"bpm": bpm_rounded},
+                    "value": value,
                     "source": "health-connect",
                     "ingestion_source": "health-connect",
-                    "external_id": f"ghc-heart_rate-{start}",
+                    "external_id": external_id,
                     "tags": ["health-connect", "heart-rate"],
                     "metadata": {"import_fingerprint": fingerprint},
-                }).execute()
+                }, "health-connect", external_id)
                 imported += 1
 
     print(f"  Heart rate: {imported} imported, {skipped} skipped")
@@ -371,29 +370,31 @@ def sync_sleep(creds, supabase, start_ms, end_ms):
             continue
 
         duration_s = int((end - start) / 1000)
-        fingerprint = sha256(f"ghc-sleep-{start}-{end}".encode()).hexdigest()
-        if dedup(supabase, fingerprint):
+        external_id = f"ghc-sleep-{start}"
+        if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
             skipped += 1
             continue
 
         duration_hours = round(duration_s / 3600, 1)
-        supabase.table("health_entries").insert({
+        fingerprint = sha256(f"ghc-sleep-{start}-{end}".encode()).hexdigest()
+
+        upsert_record(supabase, "health_entries", {
             "entry_type": "sleep",
-            "timestamp": ms_to_iso(start),
-            "event_time": ms_to_iso(start),
+            "timestamp": format_timestamp(start),
+            "event_time": format_timestamp(start),
             "numeric_value": duration_hours,
             "duration_s": duration_s,
             "value": {
-                "end_time": ms_to_iso(end),
+                "end_time": format_timestamp(end),
                 "duration_hours": duration_hours,
                 "name": session.get("name", "Sleep"),
             },
             "source": "health-connect",
             "ingestion_source": "health-connect",
-            "external_id": f"ghc-sleep-{start}",
+            "external_id": external_id,
             "tags": ["health-connect", "sleep"],
             "metadata": {"import_fingerprint": fingerprint},
-        }).execute()
+        }, "health-connect", external_id)
         imported += 1
 
     print(f"  Sleep: {imported} imported, {skipped} skipped")
@@ -404,8 +405,8 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
     """Sync exercise sessions."""
     import urllib.request
 
-    start_iso = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    end_iso = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.999Z")
+    start_iso = format_timestamp(start_ms)
+    end_iso = format_timestamp(end_ms)
 
     # Get all non-sleep sessions
     url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}"
@@ -433,16 +434,18 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
             continue
 
         duration_s = int((end - start) / 1000) if end else None
-        fingerprint = sha256(f"ghc-exercise-{start}".encode()).hexdigest()
-        if dedup(supabase, fingerprint):
+        external_id = f"ghc-exercise-{start}"
+        if dedup_by_external_id(supabase, "health_entries", "health-connect", external_id):
             skipped += 1
             continue
 
+        fingerprint = sha256(f"ghc-exercise-{start}".encode()).hexdigest()
         numeric_value = round(duration_s / 60) if duration_s else None
-        supabase.table("health_entries").insert({
+
+        upsert_record(supabase, "health_entries", {
             "entry_type": "exercise",
-            "timestamp": ms_to_iso(start),
-            "event_time": ms_to_iso(start),
+            "timestamp": format_timestamp(start),
+            "event_time": format_timestamp(start),
             "numeric_value": numeric_value,
             "duration_s": duration_s,
             "value": {
@@ -452,10 +455,10 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
             },
             "source": "health-connect",
             "ingestion_source": "health-connect",
-            "external_id": f"ghc-exercise-{start}",
+            "external_id": external_id,
             "tags": ["health-connect", "exercise"],
             "metadata": {"import_fingerprint": fingerprint},
-        }).execute()
+        }, "health-connect", external_id)
         imported += 1
 
     print(f"  Exercise: {imported} imported, {skipped} skipped")
@@ -481,7 +484,7 @@ def main():
     end_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     start_ms = int((datetime.now(tz=timezone.utc) - timedelta(days=days)).timestamp() * 1000)
 
-    start_date = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    start_date = format_date(start_ms)
     end_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
     print(f"\nSyncing {start_date} to {end_date} ({days} days)...")
 
@@ -522,19 +525,8 @@ def main():
     print(f"\nTotals: {total_imported} imported, {total_skipped} skipped ({total_processed} processed)")
 
     sync_type = "full" if args.all else "incremental"
-    try:
-        supabase.table("sync_log").insert({
-            "source": "health-api",
-            "sync_type": sync_type,
-            "records_processed": total_processed,
-            "records_imported": total_imported,
-            "records_skipped": total_skipped,
-            "records_failed": 0,
-            "status": "completed",
-        }).execute()
-        print("Sync log recorded.")
-    except Exception as e:
-        print(f"Failed to record sync log: {e}")
+    record_sync(supabase, "health-api", sync_type=sync_type, processed=total_processed,
+                imported=total_imported, skipped=total_skipped)
 
     print("\nDone!")
 
