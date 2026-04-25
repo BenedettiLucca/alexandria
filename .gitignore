@@ -1,0 +1,6 @@
+.env
+node_modules/
+.supabase/
+*.pyc
+__pycache__/
+.DS_Store
