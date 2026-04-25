@@ -25,25 +25,25 @@ def connect_supabase():
     return create_client(url, key)
 
 
-def dedup_by_external_id(supabase, table, ingestion_source, external_id):
+def dedup_by_external_id(supabase, table, source, external_id):
     if not external_id:
         return False
     existing = (
         supabase.table(table)
         .select("id")
-        .eq("ingestion_source", ingestion_source)
+        .eq("source", source)
         .eq("external_id", external_id)
         .execute()
     )
     return bool(existing.data)
 
 
-def upsert_record(supabase, table, record, ingestion_source, external_id):
+def upsert_record(supabase, table, record, source, external_id):
     if external_id:
         existing = (
             supabase.table(table)
             .select("id")
-            .eq("ingestion_source", ingestion_source)
+            .eq("source", source)
             .eq("external_id", external_id)
             .execute()
         )
@@ -51,7 +51,7 @@ def upsert_record(supabase, table, record, ingestion_source, external_id):
             return (
                 supabase.table(table)
                 .update(record)
-                .eq("ingestion_source", ingestion_source)
+                .eq("source", source)
                 .eq("external_id", external_id)
                 .execute()
             )

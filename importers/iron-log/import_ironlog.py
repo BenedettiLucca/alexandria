@@ -167,11 +167,9 @@ def import_body_metrics(db_path, supabase):
             record = {
                 "entry_type": "weight",
                 "timestamp": ts,
-                "event_time": ts,
                 "numeric_value": m["weight"],
                 "value": {"weight_kg": m["weight"]},
                 "source": "iron-log",
-                "ingestion_source": "iron-log",
                 "external_id": ext_id,
                 "tags": ["iron-log"],
                 "metadata": {"import_fingerprint": fingerprint},
@@ -194,11 +192,9 @@ def import_body_metrics(db_path, supabase):
             record = {
                 "entry_type": "body_composition",
                 "timestamp": ts,
-                "event_time": ts,
                 "numeric_value": m["weight"] if m["weight"] else None,
                 "value": measurements,
                 "source": "iron-log",
-                "ingestion_source": "iron-log",
                 "external_id": measurements_ext_id,
                 "tags": ["iron-log", "body-measurements"],
                 "metadata": {"import_fingerprint": fingerprint, "type": m["type"]},

@@ -249,11 +249,9 @@ def sync_steps(creds, supabase, start_ms, end_ms):
                 upsert_record(supabase, "health_entries", {
                     "entry_type": "steps",
                     "timestamp": format_timestamp(start),
-                    "event_time": format_timestamp(start),
                     "numeric_value": count,
                     "value": value,
                     "source": "health-connect",
-                    "ingestion_source": "health-connect",
                     "external_id": external_id,
                     "tags": ["health-connect", "steps"],
                     "metadata": {"import_fingerprint": fingerprint},
@@ -295,11 +293,9 @@ def sync_weight(creds, supabase, start_ms, end_ms):
                 upsert_record(supabase, "health_entries", {
                     "entry_type": "weight",
                     "timestamp": format_timestamp(start),
-                    "event_time": format_timestamp(start),
                     "numeric_value": weight_kg,
                     "value": value,
                     "source": "health-connect",
-                    "ingestion_source": "health-connect",
                     "external_id": external_id,
                     "tags": ["health-connect", "weight"],
                     "metadata": {"import_fingerprint": fingerprint},
@@ -341,11 +337,9 @@ def sync_heart_rate(creds, supabase, start_ms, end_ms):
                 upsert_record(supabase, "health_entries", {
                     "entry_type": "heart_rate",
                     "timestamp": format_timestamp(start),
-                    "event_time": format_timestamp(start),
                     "numeric_value": bpm_rounded,
                     "value": value,
                     "source": "health-connect",
-                    "ingestion_source": "health-connect",
                     "external_id": external_id,
                     "tags": ["health-connect", "heart-rate"],
                     "metadata": {"import_fingerprint": fingerprint},
@@ -382,7 +376,6 @@ def sync_sleep(creds, supabase, start_ms, end_ms):
         upsert_record(supabase, "health_entries", {
             "entry_type": "sleep",
             "timestamp": format_timestamp(start),
-            "event_time": format_timestamp(start),
             "numeric_value": duration_hours,
             "duration_s": duration_s,
             "value": {
@@ -391,7 +384,6 @@ def sync_sleep(creds, supabase, start_ms, end_ms):
                 "name": session.get("name", "Sleep"),
             },
             "source": "health-connect",
-            "ingestion_source": "health-connect",
             "external_id": external_id,
             "tags": ["health-connect", "sleep"],
             "metadata": {"import_fingerprint": fingerprint},
@@ -446,7 +438,6 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
         upsert_record(supabase, "health_entries", {
             "entry_type": "exercise",
             "timestamp": format_timestamp(start),
-            "event_time": format_timestamp(start),
             "numeric_value": numeric_value,
             "duration_s": duration_s,
             "value": {
@@ -455,7 +446,6 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
                 "description": session.get("description"),
             },
             "source": "health-connect",
-            "ingestion_source": "health-connect",
             "external_id": external_id,
             "tags": ["health-connect", "exercise"],
             "metadata": {"import_fingerprint": fingerprint},
