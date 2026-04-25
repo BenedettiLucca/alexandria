@@ -236,6 +236,60 @@ function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
 
+function wrapHandler(fn: (...args: any[]) => Promise<string>) {
+  return async (...args: any[]) => {
+    try {
+      return ok(await fn(...args));
+    } catch (e: any) {
+      return err(`Error: ${e.message}`);
+    }
+  };
+}
+
+async function queryTable<T = any>(
+  table: string,
+  select: string,
+  opts: {
+    filters?: Record<string, any>;
+    days?: number;
+    daysColumn?: string;
+    limit?: number;
+    order?: string;
+    ascending?: boolean;
+    orderOpts?: { ascending: boolean; nullsFirst: boolean };
+  } = {}
+): Promise<T[]> {
+  const {
+    filters = {},
+    days,
+    daysColumn = "created_at",
+    limit = 20,
+    order = "created_at",
+    ascending = false,
+    orderOpts,
+  } = opts;
+
+  let q = supabase
+    .from(table)
+    .select(select)
+    .order(order, orderOpts ?? { ascending, nullsFirst: false })
+    .limit(limit);
+
+  for (const [col, val] of Object.entries(filters)) {
+    q = q.eq(col, val);
+  }
+
+  if (days) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    q = q.gte(daysColumn, since.toISOString());
+  }
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data as T[]) || [];
+}
+
 const VALID_ENTITY_TYPES = [
   "person", "project", "concept", "location",
   "technology", "organization", "event", "other",
@@ -310,40 +364,36 @@ server.registerTool(
       tags: z.array(z.string()).optional().describe("Filter by tags"),
     },
   },
-  async ({ query, limit, threshold, category, tags }) => {
-    try {
-      const qEmb = await getEmbedding(query);
-      const { data, error } = await supabase.rpc("search_memories", {
-        query_embedding: qEmb,
-        match_threshold: threshold,
-        match_count: limit,
-        filter_category: category || null,
-        filter_tags: tags || null,
-      });
+  wrapHandler(async ({ query, limit, threshold, category, tags }) => {
+    const qEmb = await getEmbedding(query);
+    const { data, error } = await supabase.rpc("search_memories", {
+      query_embedding: qEmb,
+      match_threshold: threshold,
+      match_count: limit,
+      filter_category: category || null,
+      filter_tags: tags || null,
+    });
 
-      if (error) return err(`Search error: ${error.message}`);
-      if (!data || data.length === 0)
-        return ok(`No memories found matching "${query}".`);
+    if (error) throw new Error(`Search error: ${error.message}`);
+    if (!data || data.length === 0)
+      return `No memories found matching "${query}".`;
 
-      const results = data.map(
-        (t: any, i: number) => {
-          const parts = [
-            `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
-            `Title: ${t.title || "Untitled"}`,
-            `Category: ${t.category} | Importance: ${t.importance}/10`,
-            `Date: ${new Date(t.created_at).toLocaleDateString()}`,
-          ];
-          if (t.tags?.length) parts.push(`Tags: ${t.tags.join(", ")}`);
-          parts.push(`\n${t.content}`);
-          return parts.join("\n");
-        }
-      );
+    const results = data.map(
+      (t: any, i: number) => {
+        const parts = [
+          `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
+          `Title: ${t.title || "Untitled"}`,
+          `Category: ${t.category} | Importance: ${t.importance}/10`,
+          `Date: ${new Date(t.created_at).toLocaleDateString()}`,
+        ];
+        if (t.tags?.length) parts.push(`Tags: ${t.tags.join(", ")}`);
+        parts.push(`\n${t.content}`);
+        return parts.join("\n");
+      }
+    );
 
-      return ok(`Found ${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return `Found ${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -361,69 +411,65 @@ server.registerTool(
       people: z.array(z.string()).optional().describe("People mentioned"),
     },
   },
-  async ({ content, title, category, importance, tags, people }) => {
+  wrapHandler(async ({ content, title, category, importance, tags, people }) => {
+    const useLLM = content.length > 200 || importance === undefined;
+    const classification = useLLM
+      ? await classifyMemory(content)
+      : simpleClassify(content);
+
+    const embedding = await getEmbedding(content);
+
+    const cl = classification as Record<string, unknown>;
+    const finalCategory = category || (cl.category as string) || "note";
+    const finalImportance = importance || (cl.importance as number) || 5;
+    const finalTitle = title || (cl.title as string) || null;
+    const autoTags = (cl.tags as string[]) || [];
+    const autoPeople = (cl.people as string[]) || [];
+    const allTags = [...new Set([...autoTags, ...(tags || [])])];
+    const allPeople = [...new Set([...autoPeople, ...(people || [])])];
+
+    const { data: upsertResult, error: upsertError } = await supabase.rpc(
+      "upsert_memory",
+      {
+        p_content: content,
+        p_title: finalTitle,
+        p_category: finalCategory,
+        p_source: "mcp",
+        p_importance: finalImportance,
+        p_tags: allTags,
+        p_people: allPeople,
+        p_metadata: {
+          dates_mentioned: cl.dates_mentioned || [],
+          auto_classified: !category,
+        },
+      }
+    );
+
+    if (upsertError) throw new Error(`Capture failed: ${upsertError.message}`);
+
+    const thoughtId = upsertResult?.id;
+    const { error: embError } = await supabase
+      .from("memories")
+      .update({ embedding })
+      .eq("id", thoughtId);
+
+    if (embError) throw new Error(`Embedding save failed: ${embError.message}`);
+
     try {
-      const useLLM = content.length > 200 || importance === undefined;
-      const classification = useLLM
-        ? await classifyMemory(content)
-        : simpleClassify(content);
+      const rawEntities = Array.isArray(cl.entities) ? cl.entities : [];
+      if (rawEntities.length > 0 && thoughtId) {
+        await processEntities(content, thoughtId as string, rawEntities);
+      }
+    } catch { /* non-blocking */ }
 
-      const embedding = await getEmbedding(content);
+    const classifier = useLLM ? "LLM" : "keyword";
+    const status = upsertResult?.status === "updated" ? "Updated existing" : "Captured new";
+    let confirmation = `${status} memory as "${finalCategory}" (importance ${finalImportance}/10, classified via ${classifier})`;
+    if (allTags.length) confirmation += `\nTags: ${allTags.join(", ")}`;
+    if (allPeople.length) confirmation += `\nPeople: ${allPeople.join(", ")}`;
 
-      const cl = classification as Record<string, unknown>;
-      const finalCategory = category || (cl.category as string) || "note";
-      const finalImportance = importance || (cl.importance as number) || 5;
-      const finalTitle = title || (cl.title as string) || null;
-      const autoTags = (cl.tags as string[]) || [];
-      const autoPeople = (cl.people as string[]) || [];
-      const allTags = [...new Set([...autoTags, ...(tags || [])])];
-      const allPeople = [...new Set([...autoPeople, ...(people || [])])];
-
-      const { data: upsertResult, error: upsertError } = await supabase.rpc(
-        "upsert_memory",
-        {
-          p_content: content,
-          p_title: finalTitle,
-          p_category: finalCategory,
-          p_source: "mcp",
-          p_importance: finalImportance,
-          p_tags: allTags,
-          p_people: allPeople,
-          p_metadata: {
-            dates_mentioned: cl.dates_mentioned || [],
-            auto_classified: !category,
-          },
-        }
-      );
-
-      if (upsertError) return err(`Capture failed: ${upsertError.message}`);
-
-      const thoughtId = upsertResult?.id;
-      const { error: embError } = await supabase
-        .from("memories")
-        .update({ embedding })
-        .eq("id", thoughtId);
-
-      if (embError) return err(`Embedding save failed: ${embError.message}`);
-
-      try {
-        const rawEntities = Array.isArray(cl.entities) ? cl.entities : [];
-        if (rawEntities.length > 0 && thoughtId) {
-          await processEntities(content, thoughtId as string, rawEntities);
-        }
-      } catch { /* non-blocking */ }
-
-      const classifier = useLLM ? "LLM" : "keyword";
-      const status = upsertResult?.status === "updated" ? "Updated existing" : "Captured new";
-      let confirmation = `${status} memory as "${finalCategory}" (importance ${finalImportance}/10, classified via ${classifier})`;
-      if (allTags.length) confirmation += `\nTags: ${allTags.join(", ")}`;
-      if (allPeople.length) confirmation += `\nPeople: ${allPeople.join(", ")}`;
-
-      return ok(confirmation);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return confirmation;
+  })
 );
 
 server.registerTool(
@@ -441,38 +487,37 @@ server.registerTool(
       importance_min: z.number().optional().describe("Minimum importance (1-10)"),
     },
   },
-  async ({ limit, category, tag, source, days, importance_min }) => {
-    try {
-      let q = supabase
-        .from("memories")
-        .select("id, content, title, category, source, importance, tags, created_at")
-        .order("created_at", { ascending: false })
-        .limit(limit);
+  wrapHandler(async ({ limit, category, tag, source, days, importance_min }) => {
+    const filters: Record<string, any> = {};
+    if (category) filters.category = category;
+    if (source) filters.source = source;
 
-      if (category) q = q.eq("category", category);
-      if (tag) q = q.contains("tags", [tag]);
-      if (source) q = q.eq("source", source);
-      if (importance_min) q = q.gte("importance", importance_min);
-      if (days) {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        q = q.gte("created_at", since.toISOString());
-      }
+    let q = supabase
+      .from("memories")
+      .select("id, content, title, category, source, importance, tags, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data || !data.length) return ok("No memories found.");
-
-      const results = data.map((t: any, i: number) => {
-        const tags = t.tags?.length ? ` [${t.tags.join(", ")}]` : "";
-        return `${i + 1}. [${new Date(t.created_at).toLocaleDateString()}] ${t.category}${tags} (${t.importance}/10)\n   ${t.title || t.content.slice(0, 120)}`;
-      });
-
-      return ok(`${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
+    if (tag) q = q.contains("tags", [tag]);
+    if (importance_min) q = q.gte("importance", importance_min);
+    if (days) {
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      q = q.gte("created_at", since.toISOString());
     }
-  }
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data || !data.length) return "No memories found.";
+
+    const results = data.map((t: any, i: number) => {
+      const tags = t.tags?.length ? ` [${t.tags.join(", ")}]` : "";
+      return `${i + 1}. [${new Date(t.created_at).toLocaleDateString()}] ${t.category}${tags} (${t.importance}/10)\n   ${t.title || t.content.slice(0, 120)}`;
+    });
+
+    return `${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -482,57 +527,53 @@ server.registerTool(
     description: "Summary of all memories: totals by category, top tags, people mentioned, date range.",
     inputSchema: {},
   },
-  async () => {
-    try {
-      const { count } = await supabase
-        .from("memories")
-        .select("*", { count: "exact", head: true });
+  wrapHandler(async () => {
+    const { count } = await supabase
+      .from("memories")
+      .select("*", { count: "exact", head: true });
 
-      const { data } = await supabase
-        .from("memories")
-        .select("category, tags, people, importance, created_at")
-        .order("created_at", { ascending: false });
+    const { data } = await supabase
+      .from("memories")
+      .select("category, tags, people, importance, created_at")
+      .order("created_at", { ascending: false });
 
-      const cats: Record<string, number> = {};
-      const tags: Record<string, number> = {};
-      const people: Record<string, number> = {};
+    const cats: Record<string, number> = {};
+    const tags: Record<string, number> = {};
+    const people: Record<string, number> = {};
 
-      for (const r of data || []) {
-        if (r.category) cats[r.category] = (cats[r.category] || 0) + 1;
-        if (r.tags) for (const t of r.tags) tags[t] = (tags[t] || 0) + 1;
-        if (r.people) for (const p of r.people) people[p] = (people[p] || 0) + 1;
-      }
-
-      const sort = (o: Record<string, number>) =>
-        Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 10);
-
-      const lines = [
-        `Library of Alexandria -- Memory Statistics`,
-        `Total memories: ${count}`,
-        `Date range: ${
-          data?.length
-            ? new Date(data[data.length - 1].created_at).toLocaleDateString() +
-              " -> " +
-              new Date(data[0].created_at).toLocaleDateString()
-            : "N/A"
-        }`,
-        "",
-        "Categories:",
-        ...sort(cats).map(([k, v]) => `  ${k}: ${v}`),
-      ];
-
-      if (Object.keys(tags).length) {
-        lines.push("", "Top tags:", ...sort(tags).map(([k, v]) => `  ${k}: ${v}`));
-      }
-      if (Object.keys(people).length) {
-        lines.push("", "People:", ...sort(people).map(([k, v]) => `  ${k}: ${v}`));
-      }
-
-      return ok(lines.join("\n"));
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    for (const r of data || []) {
+      if (r.category) cats[r.category] = (cats[r.category] || 0) + 1;
+      if (r.tags) for (const t of r.tags) tags[t] = (tags[t] || 0) + 1;
+      if (r.people) for (const p of r.people) people[p] = (people[p] || 0) + 1;
     }
-  }
+
+    const sort = (o: Record<string, number>) =>
+      Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+    const lines = [
+      `Library of Alexandria -- Memory Statistics`,
+      `Total memories: ${count}`,
+      `Date range: ${
+        data?.length
+          ? new Date(data[data.length - 1].created_at).toLocaleDateString() +
+            " -> " +
+            new Date(data[0].created_at).toLocaleDateString()
+          : "N/A"
+      }`,
+      "",
+      "Categories:",
+      ...sort(cats).map(([k, v]) => `  ${k}: ${v}`),
+    ];
+
+    if (Object.keys(tags).length) {
+      lines.push("", "Top tags:", ...sort(tags).map(([k, v]) => `  ${k}: ${v}`));
+    }
+    if (Object.keys(people).length) {
+      lines.push("", "People:", ...sort(people).map(([k, v]) => `  ${k}: ${v}`));
+    }
+
+    return lines.join("\n");
+  })
 );
 
 // ============================================================
@@ -549,33 +590,28 @@ server.registerTool(
       key: z.string().optional().describe("Specific profile key (e.g. 'identity', 'preferences', 'stack'). Omit for all."),
     },
   },
-  async ({ key }) => {
-    try {
-      const client = getUserClient(currentAuth);
-      const isJwt = currentAuth?.method === "jwt";
-      const qBase = isJwt
-        ? client.from("profile").select("key, value, updated_at").eq("owner_id", currentAuth.userId)
-        : client.from("profile").select("key, value, updated_at").is("owner_id", null);
+  wrapHandler(async ({ key }) => {
+    const client = getUserClient(currentAuth);
+    const isJwt = currentAuth?.method === "jwt";
+    const qBase = isJwt
+      ? client.from("profile").select("key, value, updated_at").eq("owner_id", currentAuth.userId)
+      : client.from("profile").select("key, value, updated_at").is("owner_id", null);
 
-      if (key) {
-        const { data, error } = await qBase.eq("key", key).single();
-        if (error) return err(`Profile key "${key}" not found.`);
-        return ok(`Profile: ${data.key}\nUpdated: ${new Date(data.updated_at).toLocaleDateString()}\n\n${JSON.stringify(data.value, null, 2)}`);
-      }
-
-      const { data, error } = await qBase.order("key");
-
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok("Profile is empty. Use set_profile to add entries.");
-
-      const sections = data.map((s: any) =>
-        `== ${s.key} == (updated ${new Date(s.updated_at).toLocaleDateString()})\n${JSON.stringify(s.value, null, 2)}`
-      );
-      return ok(`User Profile:\n\n${sections.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    if (key) {
+      const { data, error } = await qBase.eq("key", key).single();
+      if (error) throw new Error(`Profile key "${key}" not found.`);
+      return `Profile: ${data.key}\nUpdated: ${new Date(data.updated_at).toLocaleDateString()}\n\n${JSON.stringify(data.value, null, 2)}`;
     }
-  }
+
+    const { data, error } = await qBase.order("key");
+    if (error) throw new Error(error.message);
+    if (!data?.length) return "Profile is empty. Use set_profile to add entries.";
+
+    const sections = data.map((s: any) =>
+      `== ${s.key} == (updated ${new Date(s.updated_at).toLocaleDateString()})\n${JSON.stringify(s.value, null, 2)}`
+    );
+    return `User Profile:\n\n${sections.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -589,26 +625,22 @@ server.registerTool(
       value: z.record(z.any()).describe("Profile data as a JSON object"),
     },
   },
-  async ({ key, value }) => {
-    try {
-      const client = getUserClient(currentAuth);
-      const isJwt = currentAuth?.method === "jwt";
-      const ownerFilter = isJwt
-        ? { owner_id: currentAuth.userId }
-        : { owner_id: null };
+  wrapHandler(async ({ key, value }) => {
+    const client = getUserClient(currentAuth);
+    const isJwt = currentAuth?.method === "jwt";
+    const ownerFilter = isJwt
+      ? { owner_id: currentAuth.userId }
+      : { owner_id: null };
 
-      const row = { key, value, updated_at: new Date().toISOString(), ...ownerFilter };
+    const row = { key, value, updated_at: new Date().toISOString(), ...ownerFilter };
 
-      const { error } = await client
-        .from("profile")
-        .upsert(row, { onConflict: isJwt ? "key,owner_id" : "key" });
+    const { error } = await client
+      .from("profile")
+      .upsert(row, { onConflict: isJwt ? "key,owner_id" : "key" });
 
-      if (error) return err(`Failed: ${error.message}`);
-      return ok(`Profile "${key}" saved.`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    if (error) throw new Error(`Failed: ${error.message}`);
+    return `Profile "${key}" saved.`;
+  })
 );
 
 // ============================================================
@@ -622,36 +654,32 @@ server.registerTool(
     description: "Return the current authentication context: user ID, email, auth method (JWT or API key), and profile sections.",
     inputSchema: {},
   },
-  async () => {
-    try {
-      const auth = currentAuth;
-      if (!auth) return err("Not authenticated.");
+  wrapHandler(async () => {
+    const auth = currentAuth;
+    if (!auth) throw new Error("Not authenticated.");
 
-      const lines = [
-        `Auth method: ${auth.method === "jwt" ? "JWT Bearer token" : "Static API key"}`,
-        `User ID: ${auth.userId}`,
-      ];
-      if (auth.email) lines.push(`Email: ${auth.email}`);
+    const lines = [
+      `Auth method: ${auth.method === "jwt" ? "JWT Bearer token" : "Static API key"}`,
+      `User ID: ${auth.userId}`,
+    ];
+    if (auth.email) lines.push(`Email: ${auth.email}`);
 
-      if (auth.method === "jwt") {
-        const client = getUserClient(auth);
-        const { data: profileKeys, error } = await client
-          .from("profile")
-          .select("key")
-          .eq("owner_id", auth.userId)
-          .order("key");
+    if (auth.method === "jwt") {
+      const client = getUserClient(auth);
+      const { data: profileKeys, error } = await client
+        .from("profile")
+        .select("key")
+        .eq("owner_id", auth.userId)
+        .order("key");
 
-        if (!error && profileKeys?.length) {
-          lines.push("", "Profile sections:");
-          profileKeys.forEach((p: any) => lines.push(`  - ${p.key}`));
-        }
+      if (!error && profileKeys?.length) {
+        lines.push("", "Profile sections:");
+        profileKeys.forEach((p: any) => lines.push(`  - ${p.key}`));
       }
-
-      return ok(lines.join("\n"));
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
     }
-  }
+
+    return lines.join("\n");
+  })
 );
 
 server.registerTool(
@@ -663,27 +691,21 @@ server.registerTool(
       status: z.string().optional().describe("Filter: active, paused, archived"),
     },
   },
-  async ({ status }) => {
-    try {
-      let q = supabase
-        .from("projects")
-        .select("id, name, path, status, stack, created_at, updated_at")
-        .order("updated_at", { ascending: false });
-      if (status) q = q.eq("status", status);
+  wrapHandler(async ({ status }) => {
+    const data = await queryTable(
+      "projects",
+      "id, name, path, status, stack, created_at, updated_at",
+      { filters: status ? { status } : {}, order: "updated_at", ascending: false }
+    );
 
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok("No projects tracked yet.");
+    if (!data.length) return "No projects tracked yet.";
 
-      const results = data.map((p: any, i: number) => {
-        const stack = p.stack?.length ? ` [${p.stack.join(", ")}]` : "";
-        return `${i + 1}. ${p.name} (${p.status})${stack}\n   Path: ${p.path || "N/A"} | Updated: ${new Date(p.updated_at).toLocaleDateString()}`;
-      });
-      return ok(`${data.length} project(s):\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    const results = data.map((p: any, i: number) => {
+      const stack = p.stack?.length ? ` [${p.stack.join(", ")}]` : "";
+      return `${i + 1}. ${p.name} (${p.status})${stack}\n   Path: ${p.path || "N/A"} | Updated: ${new Date(p.updated_at).toLocaleDateString()}`;
+    });
+    return `${data.length} project(s):\n\n${results.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -700,41 +722,36 @@ server.registerTool(
       status: z.string().optional().describe("active, paused, or archived"),
     },
   },
-  async ({ name, path, description, stack, conventions, status }) => {
-    try {
-      const update: Record<string, unknown> = {
-        name,
-        updated_at: new Date().toISOString(),
-      };
-      if (path !== undefined) update.path = path;
-      if (description !== undefined) update.description = description;
-      if (stack !== undefined) update.stack = stack;
-      if (conventions !== undefined) update.conventions = conventions;
-      if (status !== undefined) update.status = status;
+  wrapHandler(async ({ name, path, description, stack, conventions, status }) => {
+    const update: Record<string, unknown> = {
+      name,
+      updated_at: new Date().toISOString(),
+    };
+    if (path !== undefined) update.path = path;
+    if (description !== undefined) update.description = description;
+    if (stack !== undefined) update.stack = stack;
+    if (conventions !== undefined) update.conventions = conventions;
+    if (status !== undefined) update.status = status;
 
-      // Check if project exists by name
-      const { data: existing } = await supabase
+    const { data: existing } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("name", name)
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await supabase
         .from("projects")
-        .select("id")
-        .eq("name", name)
-        .maybeSingle();
-
-      if (existing) {
-        const { error } = await supabase
-          .from("projects")
-          .update(update)
-          .eq("id", existing.id);
-        if (error) return err(`Update failed: ${error.message}`);
-        return ok(`Project "${name}" updated.`);
-      }
-
-      const { error } = await supabase.from("projects").insert(update);
-      if (error) return err(`Create failed: ${error.message}`);
-      return ok(`Project "${name}" created.`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+        .update(update)
+        .eq("id", existing.id);
+      if (error) throw new Error(`Update failed: ${error.message}`);
+      return `Project "${name}" updated.`;
     }
-  }
+
+    const { error } = await supabase.from("projects").insert(update);
+    if (error) throw new Error(`Create failed: ${error.message}`);
+    return `Project "${name}" created.`;
+  })
 );
 
 // ============================================================
@@ -758,42 +775,38 @@ server.registerTool(
       external_id: z.string().optional().describe("External record ID from source system for upsert dedup"),
     },
   },
-  async ({ entry_type, timestamp, duration_s, value, tags, event_time, numeric_value, ingestion_source, external_id }) => {
+  wrapHandler(async ({ entry_type, timestamp, duration_s, value, tags, event_time, numeric_value, ingestion_source, external_id }) => {
+    const row: Record<string, unknown> = {
+      entry_type,
+      timestamp,
+      duration_s: duration_s || null,
+      value,
+      tags: tags || [],
+      source: "mcp",
+    };
+    if (event_time !== undefined) row.event_time = event_time;
+    if (numeric_value !== undefined) row.numeric_value = numeric_value;
+    if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
+    if (external_id !== undefined) row.external_id = external_id;
+
+    const { data, error } = await supabase
+      .from("health_entries")
+      .insert(row)
+      .select("id")
+      .single();
+
+    if (error) throw new Error(`Health log failed: ${error.message}`);
+    const id = data?.id;
+    const ts = event_time || timestamp;
+
     try {
-      const row: Record<string, unknown> = {
-        entry_type,
-        timestamp,
-        duration_s: duration_s || null,
-        value,
-        tags: tags || [],
-        source: "mcp",
-      };
-      if (event_time !== undefined) row.event_time = event_time;
-      if (numeric_value !== undefined) row.numeric_value = numeric_value;
-      if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
-      if (external_id !== undefined) row.external_id = external_id;
+      const text = recordToText(entry_type, { ...row, event_time: row.event_time || timestamp });
+      const embedding = await getEmbedding(text);
+      await supabase.from("health_entries").update({ embedding }).eq("id", id);
+    } catch { /* non-blocking */ }
 
-      const { data, error } = await supabase
-        .from("health_entries")
-        .insert(row)
-        .select("id")
-        .single();
-
-      if (error) return err(`Health log failed: ${error.message}`);
-      const id = data?.id;
-      const ts = event_time || timestamp;
-
-      try {
-        const text = recordToText(entry_type, { ...row, event_time: row.event_time || timestamp });
-        const embedding = await getEmbedding(text);
-        await supabase.from("health_entries").update({ embedding }).eq("id", id);
-      } catch { /* non-blocking */ }
-
-      return ok(`Health entry logged: ${entry_type} at ${new Date(ts).toLocaleString()}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return `Health entry logged: ${entry_type} at ${new Date(ts).toLocaleString()}`;
+  })
 );
 
 server.registerTool(
@@ -809,38 +822,34 @@ server.registerTool(
       event_to: z.string().optional().describe("Filter to event_time (ISO 8601)"),
     },
   },
-  async ({ entry_type, days, limit, event_from, event_to }) => {
-    try {
-      let q = supabase
-        .from("health_entries")
-        .select("entry_type, timestamp, event_time, duration_s, numeric_value, value, tags")
-        .order("event_time", { ascending: false, nullsFirst: false })
-        .limit(limit);
+  wrapHandler(async ({ entry_type, days, limit, event_from, event_to }) => {
+    let q = supabase
+      .from("health_entries")
+      .select("entry_type, timestamp, event_time, duration_s, numeric_value, value, tags")
+      .order("event_time", { ascending: false, nullsFirst: false })
+      .limit(limit);
 
-      if (entry_type) q = q.eq("entry_type", entry_type);
-      if (days) {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        q = q.gte("event_time", since.toISOString());
-      }
-      if (event_from) q = q.gte("event_time", event_from);
-      if (event_to) q = q.lte("event_time", event_to);
-
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok("No health entries found.");
-
-      const results = data.map((e: any, i: number) => {
-        const ts = new Date(e.event_time || e.timestamp).toLocaleString();
-        const dur = e.duration_s ? ` (${Math.round(e.duration_s / 60)}min)` : "";
-        const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
-        return `${i + 1}. [${ts}] ${e.entry_type}${dur}${numVal}\n   ${JSON.stringify(e.value)}`;
-      });
-      return ok(`${data.length} health entries:\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    if (entry_type) q = q.eq("entry_type", entry_type);
+    if (days) {
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      q = q.gte("event_time", since.toISOString());
     }
-  }
+    if (event_from) q = q.gte("event_time", event_from);
+    if (event_to) q = q.lte("event_time", event_to);
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data?.length) return "No health entries found.";
+
+    const results = data.map((e: any, i: number) => {
+      const ts = new Date(e.event_time || e.timestamp).toLocaleString();
+      const dur = e.duration_s ? ` (${Math.round(e.duration_s / 60)}min)` : "";
+      const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
+      return `${i + 1}. [${ts}] ${e.entry_type}${dur}${numVal}\n   ${JSON.stringify(e.value)}`;
+    });
+    return `${data.length} health entries:\n\n${results.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -856,39 +865,35 @@ server.registerTool(
       entry_type: z.string().optional().describe("Filter by entry type (e.g. sleep, steps, heart_rate)"),
     },
   },
-  async ({ query, limit, threshold, entry_type }) => {
-    try {
-      const qEmb = await getEmbedding(query);
-      const { data, error } = await supabase.rpc("search_health_entries", {
-        query_embedding: qEmb,
-        match_threshold: threshold,
-        match_count: limit,
-        filter_entry_type: entry_type || null,
-      });
+  wrapHandler(async ({ query, limit, threshold, entry_type }) => {
+    const qEmb = await getEmbedding(query);
+    const { data, error } = await supabase.rpc("search_health_entries", {
+      query_embedding: qEmb,
+      match_threshold: threshold,
+      match_count: limit,
+      filter_entry_type: entry_type || null,
+    });
 
-      if (error) return err(`Search error: ${error.message}`);
-      if (!data || data.length === 0)
-        return ok(`No health entries found matching "${query}".`);
+    if (error) throw new Error(`Search error: ${error.message}`);
+    if (!data || data.length === 0)
+      return `No health entries found matching "${query}".`;
 
-      const results = data.map(
-        (t: any, i: number) => {
-          const parts = [
-            `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
-            `Type: ${t.entry_type}`,
-            `Date: ${new Date(t.event_time || t.timestamp).toLocaleString()}`,
-          ];
-          if (t.numeric_value != null) parts.push(`Value: ${t.numeric_value}`);
-          if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
-          parts.push(`\n${JSON.stringify(t.value)}`);
-          return parts.join("\n");
-        }
-      );
+    const results = data.map(
+      (t: any, i: number) => {
+        const parts = [
+          `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
+          `Type: ${t.entry_type}`,
+          `Date: ${new Date(t.event_time || t.timestamp).toLocaleString()}`,
+        ];
+        if (t.numeric_value != null) parts.push(`Value: ${t.numeric_value}`);
+        if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
+        parts.push(`\n${JSON.stringify(t.value)}`);
+        return parts.join("\n");
+      }
+    );
 
-      return ok(`Found ${data.length} health entr${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return `Found ${data.length} health entr${data.length === 1 ? "y" : "ies"}:\n\n${results.join("\n\n")}`;
+  })
 );
 
 // ============================================================
@@ -915,43 +920,39 @@ server.registerTool(
       external_id: z.string().optional().describe("External record ID from source system for upsert dedup"),
     },
   },
-  async ({ workout_date, workout_type, name, exercises, duration_s, volume_kg, rpe, notes, tags, event_time, ingestion_source, external_id }) => {
+  wrapHandler(async ({ workout_date, workout_type, name, exercises, duration_s, volume_kg, rpe, notes, tags, event_time, ingestion_source, external_id }) => {
+    const row: Record<string, unknown> = {
+      workout_date,
+      workout_type,
+      name,
+      exercises,
+      duration_s: duration_s || null,
+      volume_kg: volume_kg || null,
+      rpe: rpe || null,
+      notes: notes || null,
+      tags: tags || [],
+    };
+    if (event_time !== undefined) row.event_time = event_time;
+    if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
+    if (external_id !== undefined) row.external_id = external_id;
+
+    const { data, error } = await supabase
+      .from("training_logs")
+      .insert(row)
+      .select("id")
+      .single();
+
+    if (error) throw new Error(`Workout log failed: ${error.message}`);
+    const id = data?.id;
+
     try {
-      const row: Record<string, unknown> = {
-        workout_date,
-        workout_type,
-        name,
-        exercises,
-        duration_s: duration_s || null,
-        volume_kg: volume_kg || null,
-        rpe: rpe || null,
-        notes: notes || null,
-        tags: tags || [],
-      };
-      if (event_time !== undefined) row.event_time = event_time;
-      if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
-      if (external_id !== undefined) row.external_id = external_id;
+      const text = workoutToText({ ...row, event_time: row.event_time || workout_date });
+      const embedding = await getEmbedding(text);
+      await supabase.from("training_logs").update({ embedding }).eq("id", id);
+    } catch { /* non-blocking */ }
 
-      const { data, error } = await supabase
-        .from("training_logs")
-        .insert(row)
-        .select("id")
-        .single();
-
-      if (error) return err(`Workout log failed: ${error.message}`);
-      const id = data?.id;
-
-      try {
-        const text = workoutToText({ ...row, event_time: row.event_time || workout_date });
-        const embedding = await getEmbedding(text);
-        await supabase.from("training_logs").update({ embedding }).eq("id", id);
-      } catch { /* non-blocking */ }
-
-      return ok(`Workout logged: ${name} (${workout_type}) on ${workout_date}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return `Workout logged: ${name} (${workout_type}) on ${workout_date}`;
+  })
 );
 
 server.registerTool(
@@ -965,36 +966,32 @@ server.registerTool(
       limit: z.number().optional().default(20),
     },
   },
-  async ({ workout_type, days, limit }) => {
-    try {
-      let q = supabase
-        .from("training_logs")
-        .select("workout_date, workout_type, name, exercises, volume_kg, rpe, notes, event_time")
-        .order("event_time", { ascending: false, nullsFirst: false })
-        .limit(limit);
+  wrapHandler(async ({ workout_type, days, limit }) => {
+    let q = supabase
+      .from("training_logs")
+      .select("workout_date, workout_type, name, exercises, volume_kg, rpe, notes, event_time")
+      .order("event_time", { ascending: false, nullsFirst: false })
+      .limit(limit);
 
-      if (workout_type) q = q.eq("workout_type", workout_type);
-      if (days) {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        q = q.gte("workout_date", since.toISOString().split("T")[0]);
-      }
-
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok("No workouts found.");
-
-      const results = data.map((w: any, i: number) => {
-        const vol = w.volume_kg ? ` | Vol: ${w.volume_kg}kg` : "";
-        const rpe = w.rpe ? ` | RPE: ${w.rpe}` : "";
-        const exCount = Array.isArray(w.exercises) ? `${w.exercises.length} exercises` : "";
-        return `${i + 1}. [${w.workout_date}] ${w.name} (${w.workout_type})${vol}${rpe}\n   ${exCount}${w.notes ? " -- " + w.notes : ""}`;
-      });
-      return ok(`${data.length} workout(s):\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    if (workout_type) q = q.eq("workout_type", workout_type);
+    if (days) {
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      q = q.gte("workout_date", since.toISOString().split("T")[0]);
     }
-  }
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data?.length) return "No workouts found.";
+
+    const results = data.map((w: any, i: number) => {
+      const vol = w.volume_kg ? ` | Vol: ${w.volume_kg}kg` : "";
+      const rpe = w.rpe ? ` | RPE: ${w.rpe}` : "";
+      const exCount = Array.isArray(w.exercises) ? `${w.exercises.length} exercises` : "";
+      return `${i + 1}. [${w.workout_date}] ${w.name} (${w.workout_type})${vol}${rpe}\n   ${exCount}${w.notes ? " -- " + w.notes : ""}`;
+    });
+    return `${data.length} workout(s):\n\n${results.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -1010,48 +1007,44 @@ server.registerTool(
       workout_type: z.string().optional().describe("Filter: strength, cardio, flexibility, other"),
     },
   },
-  async ({ query, limit, threshold, workout_type }) => {
-    try {
-      const qEmb = await getEmbedding(query);
-      const { data, error } = await supabase.rpc("search_training_logs", {
-        query_embedding: qEmb,
-        match_threshold: threshold,
-        match_count: limit,
-        filter_workout_type: workout_type || null,
-      });
+  wrapHandler(async ({ query, limit, threshold, workout_type }) => {
+    const qEmb = await getEmbedding(query);
+    const { data, error } = await supabase.rpc("search_training_logs", {
+      query_embedding: qEmb,
+      match_threshold: threshold,
+      match_count: limit,
+      filter_workout_type: workout_type || null,
+    });
 
-      if (error) return err(`Search error: ${error.message}`);
-      if (!data || data.length === 0)
-        return ok(`No workouts found matching "${query}".`);
+    if (error) throw new Error(`Search error: ${error.message}`);
+    if (!data || data.length === 0)
+      return `No workouts found matching "${query}".`;
 
-      const results = data.map(
-        (t: any, i: number) => {
-          const parts = [
-            `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
-            `Workout: ${t.name} (${t.workout_type}) on ${t.workout_date}`,
-          ];
-          if (t.volume_kg != null) parts.push(`Volume: ${t.volume_kg}kg`);
-          if (t.rpe != null) parts.push(`RPE: ${t.rpe}`);
-          if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
-          if (t.exercises?.length) {
-            const exList = t.exercises.map((e: any) => {
-              const sets = e.sets != null ? `${e.sets}x` : "";
-              const reps = e.reps != null ? `${e.reps}` : "";
-              const w = e.weight_kg != null ? `@${e.weight_kg}kg` : "";
-              return `  - ${e.name} ${sets}${reps}${w}`.trim();
-            });
-            parts.push(`Exercises:\n${exList.join("\n")}`);
-          }
-          if (t.notes) parts.push(`Notes: ${t.notes}`);
-          return parts.join("\n");
+    const results = data.map(
+      (t: any, i: number) => {
+        const parts = [
+          `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
+          `Workout: ${t.name} (${t.workout_type}) on ${t.workout_date}`,
+        ];
+        if (t.volume_kg != null) parts.push(`Volume: ${t.volume_kg}kg`);
+        if (t.rpe != null) parts.push(`RPE: ${t.rpe}`);
+        if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
+        if (t.exercises?.length) {
+          const exList = t.exercises.map((e: any) => {
+            const sets = e.sets != null ? `${e.sets}x` : "";
+            const reps = e.reps != null ? `${e.reps}` : "";
+            const w = e.weight_kg != null ? `@${e.weight_kg}kg` : "";
+            return `  - ${e.name} ${sets}${reps}${w}`.trim();
+          });
+          parts.push(`Exercises:\n${exList.join("\n")}`);
         }
-      );
+        if (t.notes) parts.push(`Notes: ${t.notes}`);
+        return parts.join("\n");
+      }
+    );
 
-      return ok(`Found ${data.length} workout(s):\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return `Found ${data.length} workout(s):\n\n${results.join("\n\n")}`;
+  })
 );
 
 // ============================================================
@@ -1070,43 +1063,39 @@ server.registerTool(
       to: z.string().optional().describe("End date YYYY-MM-DD (overrides days)"),
     },
   },
-  async ({ days, from, to }) => {
-    try {
-      let q = supabase
-        .from("health_summaries")
-        .select("*")
-        .order("date", { ascending: false })
-        .limit(days);
+  wrapHandler(async ({ days, from, to }) => {
+    let q = supabase
+      .from("health_summaries")
+      .select("*")
+      .order("date", { ascending: false })
+      .limit(days);
 
-      if (from) q = q.gte("date", from);
-      if (to) q = q.lte("date", to);
-      if (!from) {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        q = q.gte("date", since.toISOString().split("T")[0]);
-      }
-
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok("No summary computed yet. Use refresh_summary to generate one.");
-
-      const lines = data.map((s: any) => {
-        const parts = [`== ${s.date} ==`];
-        if (s.sleep_total_hours != null) parts.push(`Sleep: ${s.sleep_total_hours}h (${s.sleep_sessions || 0} sessions)`);
-        if (s.steps_total != null) parts.push(`Steps: ${s.steps_total}${s.steps_active_minutes ? ` (${s.steps_active_minutes}min active)` : ""}`);
-        if (s.hr_avg != null) parts.push(`HR: avg ${s.hr_avg} / min ${s.hr_min} / max ${s.hr_max} bpm (${s.hr_samples} samples)`);
-        if (s.weight_kg != null) parts.push(`Weight: ${s.weight_kg}kg`);
-        if (s.exercise_count > 0) parts.push(`Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""}`);
-        if (s.workout_count > 0) parts.push(`Training: ${s.workout_count} workouts${s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""}${s.training_types?.length ? ` [${s.training_types.join(", ")}]` : ""}`);
-        if (s.sources?.length) parts.push(`Sources: ${s.sources.join(", ")}`);
-        return parts.join("\n");
-      });
-
-      return ok(`${data.length} day(s):\n\n${lines.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    if (from) q = q.gte("date", from);
+    if (to) q = q.lte("date", to);
+    if (!from) {
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      q = q.gte("date", since.toISOString().split("T")[0]);
     }
-  }
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data?.length) return "No summary computed yet. Use refresh_summary to generate one.";
+
+    const lines = data.map((s: any) => {
+      const parts = [`== ${s.date} ==`];
+      if (s.sleep_total_hours != null) parts.push(`Sleep: ${s.sleep_total_hours}h (${s.sleep_sessions || 0} sessions)`);
+      if (s.steps_total != null) parts.push(`Steps: ${s.steps_total}${s.steps_active_minutes ? ` (${s.steps_active_minutes}min active)` : ""}`);
+      if (s.hr_avg != null) parts.push(`HR: avg ${s.hr_avg} / min ${s.hr_min} / max ${s.hr_max} bpm (${s.hr_samples} samples)`);
+      if (s.weight_kg != null) parts.push(`Weight: ${s.weight_kg}kg`);
+      if (s.exercise_count > 0) parts.push(`Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""}`);
+      if (s.workout_count > 0) parts.push(`Training: ${s.workout_count} workouts${s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""}${s.training_types?.length ? ` [${s.training_types.join(", ")}]` : ""}`);
+      if (s.sources?.length) parts.push(`Sources: ${s.sources.join(", ")}`);
+      return parts.join("\n");
+    });
+
+    return `${data.length} day(s):\n\n${lines.join("\n\n")}`;
+  })
 );
 
 server.registerTool(
@@ -1120,40 +1109,36 @@ server.registerTool(
       days: z.number().optional().default(1).describe("Number of recent days to refresh (used when date is omitted)"),
     },
   },
-  async ({ date, days }) => {
-    try {
-      const dates: string[] = [];
-      if (date) {
-        dates.push(date);
-      } else {
-        for (let i = 0; i < days; i++) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          dates.push(d.toISOString().split("T")[0]);
-        }
+  wrapHandler(async ({ date, days }) => {
+    const dates: string[] = [];
+    if (date) {
+      dates.push(date);
+    } else {
+      for (let i = 0; i < days; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        dates.push(d.toISOString().split("T")[0]);
       }
-
-      let computed = 0;
-      const errors: string[] = [];
-
-      for (const d of dates) {
-        const { error: rpcError } = await supabase.rpc("compute_daily_summary", {
-          target_date: d,
-        });
-        if (rpcError) {
-          errors.push(`${d}: ${rpcError.message}`);
-        } else {
-          computed++;
-        }
-      }
-
-      let result = `Refreshed ${computed} of ${dates.length} summary(s).`;
-      if (errors.length) result += `\n\nErrors:\n${errors.join("\n")}`;
-      return ok(result);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
     }
-  }
+
+    let computed = 0;
+    const errors: string[] = [];
+
+    for (const d of dates) {
+      const { error: rpcError } = await supabase.rpc("compute_daily_summary", {
+        target_date: d,
+      });
+      if (rpcError) {
+        errors.push(`${d}: ${rpcError.message}`);
+      } else {
+        computed++;
+      }
+    }
+
+    let result = `Refreshed ${computed} of ${dates.length} summary(s).`;
+    if (errors.length) result += `\n\nErrors:\n${errors.join("\n")}`;
+    return result;
+  })
 );
 
 // ============================================================
@@ -1172,36 +1157,32 @@ server.registerTool(
       limit: z.number().optional().default(10),
     },
   },
-  async ({ query, entity_type, limit }) => {
-    try {
-      let q = supabase
-        .from("entities")
-        .select("id, name, entity_type, description, created_at")
-        .ilike("name", `%${query}%`)
-        .limit(limit);
+  wrapHandler(async ({ query, entity_type, limit }) => {
+    let q = supabase
+      .from("entities")
+      .select("id, name, entity_type, description, created_at")
+      .ilike("name", `%${query}%`)
+      .limit(limit);
 
-      if (entity_type) q = q.eq("entity_type", entity_type);
+    if (entity_type) q = q.eq("entity_type", entity_type);
 
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok(`No entities found matching "${query}".`);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data?.length) return `No entities found matching "${query}".`;
 
-      const entityIds = data.map((e: any) => e.id);
-      const { count: mentionCounts } = await supabase
-        .from("entity_mentions")
-        .select("entity_id", { count: "exact", head: true })
-        .in("entity_id", entityIds);
+    const entityIds = data.map((e: any) => e.id);
+    await supabase
+      .from("entity_mentions")
+      .select("entity_id", { count: "exact", head: true })
+      .in("entity_id", entityIds);
 
-      const results = data.map((e: any, i: number) => {
-        const desc = e.description ? `\n   ${e.description}` : "";
-        return `${i + 1}. ${e.name} (${e.entity_type})${desc}`;
-      });
+    const results = data.map((e: any, i: number) => {
+      const desc = e.description ? `\n   ${e.description}` : "";
+      return `${i + 1}. ${e.name} (${e.entity_type})${desc}`;
+    });
 
-      return ok(`${data.length} entit${data.length === 1 ? "y" : "ies"} found:\n\n${results.join("\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    return `${data.length} entit${data.length === 1 ? "y" : "ies"} found:\n\n${results.join("\n")}`;
+  })
 );
 
 server.registerTool(
@@ -1215,60 +1196,56 @@ server.registerTool(
       limit: z.number().optional().default(10),
     },
   },
-  async ({ entity_id, limit }) => {
-    try {
-      const { data: entity, error: entityErr } = await supabase
-        .from("entities")
-        .select("*")
-        .eq("id", entity_id)
-        .single();
+  wrapHandler(async ({ entity_id, limit }) => {
+    const { data: entity, error: entityErr } = await supabase
+      .from("entities")
+      .select("*")
+      .eq("id", entity_id)
+      .single();
 
-      if (entityErr || !entity) return err(`Entity not found.`);
+    if (entityErr || !entity) throw new Error("Entity not found.");
 
-      const { data: mentions, error: mentionErr } = await supabase
-        .from("entity_mentions")
-        .select("memory_id, context, created_at")
-        .eq("entity_id", entity_id)
-        .order("created_at", { ascending: false })
-        .limit(limit);
+    const { data: mentions, error: mentionErr } = await supabase
+      .from("entity_mentions")
+      .select("memory_id, context, created_at")
+      .eq("entity_id", entity_id)
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-      if (mentionErr) return err(`Error: ${mentionErr.message}`);
+    if (mentionErr) throw new Error(mentionErr.message);
 
-      const memoryIds = (mentions || []).map((m: any) => m.memory_id);
-      let memoryDetails: any[] = [];
-      if (memoryIds.length) {
-        const { data: mems } = await supabase
-          .from("memories")
-          .select("id, content, title, category, created_at")
-          .in("id", memoryIds);
-        memoryDetails = mems || [];
-      }
-
-      const memById = new Map(memoryDetails.map((m: any) => [m.id, m]));
-      const lines = [
-        `== ${entity.name} (${entity.entity_type}) ==`,
-        entity.description ? `Description: ${entity.description}` : "",
-        entity.aliases?.length ? `Aliases: ${entity.aliases.join(", ")}` : "",
-        `Created: ${new Date(entity.created_at).toLocaleDateString()}`,
-        `Mentioned in ${(mentions || []).length} memories`,
-      ].filter(Boolean);
-
-      if (mentions?.length) {
-        lines.push("", "Related memories:");
-        mentions.forEach((m: any, i: number) => {
-          const mem = memById.get(m.memory_id);
-          if (mem) {
-            lines.push(`  ${i + 1}. [${new Date(mem.created_at).toLocaleDateString()}] ${mem.category}: ${mem.title || mem.content.slice(0, 100)}`);
-            if (m.context) lines.push(`     "${m.context}"`);
-          }
-        });
-      }
-
-      return ok(lines.join("\n"));
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    const memoryIds = (mentions || []).map((m: any) => m.memory_id);
+    let memoryDetails: any[] = [];
+    if (memoryIds.length) {
+      const { data: mems } = await supabase
+        .from("memories")
+        .select("id, content, title, category, created_at")
+        .in("id", memoryIds);
+      memoryDetails = mems || [];
     }
-  }
+
+    const memById = new Map(memoryDetails.map((m: any) => [m.id, m]));
+    const lines = [
+      `== ${entity.name} (${entity.entity_type}) ==`,
+      entity.description ? `Description: ${entity.description}` : "",
+      entity.aliases?.length ? `Aliases: ${entity.aliases.join(", ")}` : "",
+      `Created: ${new Date(entity.created_at).toLocaleDateString()}`,
+      `Mentioned in ${(mentions || []).length} memories`,
+    ].filter(Boolean);
+
+    if (mentions?.length) {
+      lines.push("", "Related memories:");
+      mentions.forEach((m: any, i: number) => {
+        const mem = memById.get(m.memory_id);
+        if (mem) {
+          lines.push(`  ${i + 1}. [${new Date(mem.created_at).toLocaleDateString()}] ${mem.category}: ${mem.title || mem.content.slice(0, 100)}`);
+          if (m.context) lines.push(`     "${m.context}"`);
+        }
+      });
+    }
+
+    return lines.join("\n");
+  })
 );
 
 server.registerTool(
@@ -1282,43 +1259,39 @@ server.registerTool(
       limit: z.number().optional().default(25),
     },
   },
-  async ({ entity_type, limit }) => {
-    try {
-      let entityQ = supabase
-        .from("entities")
-        .select("id, name, entity_type, description, created_at");
+  wrapHandler(async ({ entity_type, limit }) => {
+    let entityQ = supabase
+      .from("entities")
+      .select("id, name, entity_type, description, created_at");
 
-      if (entity_type) entityQ = entityQ.eq("entity_type", entity_type);
+    if (entity_type) entityQ = entityQ.eq("entity_type", entity_type);
 
-      const { data: entities, error: entityErr } = await entityQ;
-      if (entityErr) return err(`Error: ${entityErr.message}`);
-      if (!entities?.length) return ok("No entities in the knowledge graph yet.");
+    const { data: entities, error: entityErr } = await entityQ;
+    if (entityErr) throw new Error(entityErr.message);
+    if (!entities?.length) return "No entities in the knowledge graph yet.";
 
-      const entityIds = entities.map((e: any) => e.id);
-      const { data: mentions } = await supabase
-        .from("entity_mentions")
-        .select("entity_id")
-        .in("entity_id", entityIds);
+    const entityIds = entities.map((e: any) => e.id);
+    const { data: mentions } = await supabase
+      .from("entity_mentions")
+      .select("entity_id")
+      .in("entity_id", entityIds);
 
-      const countByEntity = new Map<string, number>();
-      for (const m of mentions || []) {
-        countByEntity.set(m.entity_id, (countByEntity.get(m.entity_id) || 0) + 1);
-      }
-
-      const sorted = entities
-        .map((e: any) => ({ ...e, mention_count: countByEntity.get(e.id) || 0 }))
-        .sort((a: any, b: any) => b.mention_count - a.mention_count)
-        .slice(0, limit);
-
-      const results = sorted.map((e: any, i: number) =>
-        `${i + 1}. ${e.name} (${e.entity_type}) — ${e.mention_count} mention${e.mention_count === 1 ? "" : "s"}`
-      );
-
-      return ok(`${sorted.length} entit${sorted.length === 1 ? "y" : "ies"}:\n\n${results.join("\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+    const countByEntity = new Map<string, number>();
+    for (const m of mentions || []) {
+      countByEntity.set(m.entity_id, (countByEntity.get(m.entity_id) || 0) + 1);
     }
-  }
+
+    const sorted = entities
+      .map((e: any) => ({ ...e, mention_count: countByEntity.get(e.id) || 0 }))
+      .sort((a: any, b: any) => b.mention_count - a.mention_count)
+      .slice(0, limit);
+
+    const results = sorted.map((e: any, i: number) =>
+      `${i + 1}. ${e.name} (${e.entity_type}) — ${e.mention_count} mention${e.mention_count === 1 ? "" : "s"}`
+    );
+
+    return `${sorted.length} entit${sorted.length === 1 ? "y" : "ies"}:\n\n${results.join("\n")}`;
+  })
 );
 
 // ============================================================
@@ -1340,47 +1313,43 @@ server.registerTool(
       people: z.array(z.string()).optional(),
     },
   },
-  async ({ id, content, title, category, importance, tags, people }) => {
-    try {
-      const update: Record<string, unknown> = {};
-      if (title !== undefined) update.title = title;
-      if (category !== undefined) {
-        if (!VALID_CATEGORIES.includes(category as any)) return err(`Invalid category: "${category}". Valid: ${VALID_CATEGORIES.join(", ")}`);
-        update.category = category;
-      }
-      if (importance !== undefined) update.importance = importance;
-      if (tags !== undefined) update.tags = tags;
-      if (people !== undefined) update.people = people;
-
-      if (content !== undefined) {
-        update.content = content;
-        const [embedding, classification] = await Promise.all([
-          getEmbedding(content),
-          classifyMemory(content),
-        ]);
-        update.embedding = embedding;
-        if (!title) update.title = classification.title || null;
-        if (!category) update.category = classification.category;
-        if (importance === undefined) update.importance = classification.importance;
-        const cl = classification;
-        if (tags === undefined && cl.tags) update.tags = cl.tags;
-        if (people === undefined && cl.people) update.people = cl.people;
-      }
-
-      const { data, error } = await supabase
-        .from("memories")
-        .update(update)
-        .eq("id", id)
-        .select("id, title, category")
-        .single();
-
-      if (error) return err(`Update failed: ${error.message}`);
-      if (!data) return err(`Memory ${id} not found.`);
-      return ok(`Memory updated: "${data.title || data.id}" (${data.category})`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
+  wrapHandler(async ({ id, content, title, category, importance, tags, people }) => {
+    const update: Record<string, unknown> = {};
+    if (title !== undefined) update.title = title;
+    if (category !== undefined) {
+      if (!VALID_CATEGORIES.includes(category as any)) throw new Error(`Invalid category: "${category}". Valid: ${VALID_CATEGORIES.join(", ")}`);
+      update.category = category;
     }
-  }
+    if (importance !== undefined) update.importance = importance;
+    if (tags !== undefined) update.tags = tags;
+    if (people !== undefined) update.people = people;
+
+    if (content !== undefined) {
+      update.content = content;
+      const [embedding, classification] = await Promise.all([
+        getEmbedding(content),
+        classifyMemory(content),
+      ]);
+      update.embedding = embedding;
+      if (!title) update.title = classification.title || null;
+      if (!category) update.category = classification.category;
+      if (importance === undefined) update.importance = classification.importance;
+      const cl = classification;
+      if (tags === undefined && cl.tags) update.tags = cl.tags;
+      if (people === undefined && cl.people) update.people = cl.people;
+    }
+
+    const { data, error } = await supabase
+      .from("memories")
+      .update(update)
+      .eq("id", id)
+      .select("id, title, category")
+      .single();
+
+    if (error) throw new Error(`Update failed: ${error.message}`);
+    if (!data) throw new Error(`Memory ${id} not found.`);
+    return `Memory updated: "${data.title || data.id}" (${data.category})`;
+  })
 );
 
 server.registerTool(
@@ -1392,22 +1361,18 @@ server.registerTool(
       id: z.string().uuid().describe("Memory ID to delete"),
     },
   },
-  async ({ id }) => {
-    try {
-      const { data, error } = await supabase
-        .from("memories")
-        .delete()
-        .eq("id", id)
-        .select("id, title")
-        .single();
+  wrapHandler(async ({ id }) => {
+    const { data, error } = await supabase
+      .from("memories")
+      .delete()
+      .eq("id", id)
+      .select("id, title")
+      .single();
 
-      if (error) return err(`Delete failed: ${error.message}`);
-      if (!data) return err(`Memory ${id} not found.`);
-      return ok(`Deleted memory: "${data.title || data.id}"`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    if (error) throw new Error(`Delete failed: ${error.message}`);
+    if (!data) throw new Error(`Memory ${id} not found.`);
+    return `Deleted memory: "${data.title || data.id}"`;
+  })
 );
 
 server.registerTool(
@@ -1419,22 +1384,18 @@ server.registerTool(
       id: z.string().uuid().describe("Health entry ID to delete"),
     },
   },
-  async ({ id }) => {
-    try {
-      const { data, error } = await supabase
-        .from("health_entries")
-        .delete()
-        .eq("id", id)
-        .select("id, entry_type, timestamp")
-        .single();
+  wrapHandler(async ({ id }) => {
+    const { data, error } = await supabase
+      .from("health_entries")
+      .delete()
+      .eq("id", id)
+      .select("id, entry_type, timestamp")
+      .single();
 
-      if (error) return err(`Delete failed: ${error.message}`);
-      if (!data) return err(`Health entry ${id} not found.`);
-      return ok(`Deleted health entry: ${data.entry_type} at ${new Date(data.timestamp).toLocaleString()}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    if (error) throw new Error(`Delete failed: ${error.message}`);
+    if (!data) throw new Error(`Health entry ${id} not found.`);
+    return `Deleted health entry: ${data.entry_type} at ${new Date(data.timestamp).toLocaleString()}`;
+  })
 );
 
 server.registerTool(
@@ -1454,32 +1415,28 @@ server.registerTool(
       tags: z.array(z.string()).optional(),
     },
   },
-  async ({ id, name, workout_type, exercises, duration_s, volume_kg, rpe, notes, tags }) => {
-    try {
-      const update: Record<string, unknown> = {};
-      if (name !== undefined) update.name = name;
-      if (workout_type !== undefined) update.workout_type = workout_type;
-      if (exercises !== undefined) update.exercises = exercises;
-      if (duration_s !== undefined) update.duration_s = duration_s;
-      if (volume_kg !== undefined) update.volume_kg = volume_kg;
-      if (rpe !== undefined) update.rpe = rpe;
-      if (notes !== undefined) update.notes = notes;
-      if (tags !== undefined) update.tags = tags;
+  wrapHandler(async ({ id, name, workout_type, exercises, duration_s, volume_kg, rpe, notes, tags }) => {
+    const update: Record<string, unknown> = {};
+    if (name !== undefined) update.name = name;
+    if (workout_type !== undefined) update.workout_type = workout_type;
+    if (exercises !== undefined) update.exercises = exercises;
+    if (duration_s !== undefined) update.duration_s = duration_s;
+    if (volume_kg !== undefined) update.volume_kg = volume_kg;
+    if (rpe !== undefined) update.rpe = rpe;
+    if (notes !== undefined) update.notes = notes;
+    if (tags !== undefined) update.tags = tags;
 
-      const { data, error } = await supabase
-        .from("training_logs")
-        .update(update)
-        .eq("id", id)
-        .select("id, name, workout_type, workout_date")
-        .single();
+    const { data, error } = await supabase
+      .from("training_logs")
+      .update(update)
+      .eq("id", id)
+      .select("id, name, workout_type, workout_date")
+      .single();
 
-      if (error) return err(`Update failed: ${error.message}`);
-      if (!data) return err(`Workout ${id} not found.`);
-      return ok(`Workout updated: "${data.name}" (${data.workout_type}) on ${data.workout_date}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    if (error) throw new Error(`Update failed: ${error.message}`);
+    if (!data) throw new Error(`Workout ${id} not found.`);
+    return `Workout updated: "${data.name}" (${data.workout_type}) on ${data.workout_date}`;
+  })
 );
 
 server.registerTool(
@@ -1492,35 +1449,34 @@ server.registerTool(
       limit: z.number().optional().default(10),
     },
   },
-  async ({ source, limit }) => {
-    try {
-      let q = supabase
-        .from("sync_log")
-        .select("id, source, sync_type, records_processed, records_imported, records_skipped, records_failed, started_at, completed_at, status, error_message")
-        .order("started_at", { ascending: false })
-        .limit(limit);
+  wrapHandler(async ({ source, limit }) => {
+    const filters: Record<string, any> = {};
+    if (source) filters.source = source;
 
-      if (source) q = q.eq("source", source);
+    let q = supabase
+      .from("sync_log")
+      .select("id, source, sync_type, records_processed, records_imported, records_skipped, records_failed, started_at, completed_at, status, error_message")
+      .order("started_at", { ascending: false })
+      .limit(limit);
 
-      const { data, error } = await q;
-      if (error) return err(`Error: ${error.message}`);
-      if (!data?.length) return ok("No sync history found.");
+    for (const [col, val] of Object.entries(filters)) q = q.eq(col, val);
 
-      const results = data.map((s: any, i: number) => {
-        const started = new Date(s.started_at).toLocaleString();
-        const completed = s.completed_at ? new Date(s.completed_at).toLocaleString() : "—";
-        const dur = s.completed_at
-          ? `${Math.round((new Date(s.completed_at).getTime() - new Date(s.started_at).getTime()) / 1000)}s`
-          : "—";
-        const errLine = s.error_message ? `\n   Error: ${s.error_message}` : "";
-        return `${i + 1}. [${started}] ${s.source} (${s.sync_type}) — ${s.status}${errLine}\n   Processed: ${s.records_processed} | Imported: ${s.records_imported} | Skipped: ${s.records_skipped} | Failed: ${s.records_failed}\n   Duration: ${dur} | Completed: ${completed}`;
-      });
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (!data?.length) return "No sync history found.";
 
-      return ok(`${data.length} sync(s):\n\n${results.join("\n\n")}`);
-    } catch (e: any) {
-      return err(`Error: ${e.message}`);
-    }
-  }
+    const results = data.map((s: any, i: number) => {
+      const started = new Date(s.started_at).toLocaleString();
+      const completed = s.completed_at ? new Date(s.completed_at).toLocaleString() : "—";
+      const dur = s.completed_at
+        ? `${Math.round((new Date(s.completed_at).getTime() - new Date(s.started_at).getTime()) / 1000)}s`
+        : "—";
+      const errLine = s.error_message ? `\n   Error: ${s.error_message}` : "";
+      return `${i + 1}. [${started}] ${s.source} (${s.sync_type}) — ${s.status}${errLine}\n   Processed: ${s.records_processed} | Imported: ${s.records_imported} | Skipped: ${s.records_skipped} | Failed: ${s.records_failed}\n   Duration: ${dur} | Completed: ${completed}`;
+    });
+
+    return `${data.length} sync(s):\n\n${results.join("\n\n")}`;
+  })
 );
 
 // ============================================================
