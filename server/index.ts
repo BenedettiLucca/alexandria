@@ -652,13 +652,11 @@ server.registerTool(
       duration_s: z.number().optional().describe("Duration in seconds"),
       value: z.record(z.any()).describe("Health data as JSON (varies by type)"),
       tags: z.array(z.string()).optional(),
-      event_time: z.string().optional().describe("ISO 8601 timestamp for when the event actually happened (distinct from ingestion time)"),
       numeric_value: z.number().optional().describe("Primary numeric value (e.g. bpm for heart_rate, kg for weight, duration_hours for sleep)"),
-      ingestion_source: z.string().optional().describe("Source system: health-connect, iron-log, health-api, mcp"),
       external_id: z.string().optional().describe("External record ID from source system for upsert dedup"),
     },
   },
-  wrapHandler(async ({ entry_type, timestamp, duration_s, value, tags, event_time, numeric_value, ingestion_source, external_id }) => {
+  wrapHandler(async ({ entry_type, timestamp, duration_s, value, tags, numeric_value, external_id }) => {
     const row: Record<string, unknown> = {
       entry_type,
       timestamp,
@@ -667,9 +665,7 @@ server.registerTool(
       tags: tags || [],
       source: "mcp",
     };
-    if (event_time !== undefined) row.event_time = event_time;
     if (numeric_value !== undefined) row.numeric_value = numeric_value;
-    if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
     if (external_id !== undefined) row.external_id = external_id;
 
     const { data, error } = await supabase
@@ -680,15 +676,14 @@ server.registerTool(
 
     if (error) throw new Error(`Health log failed: ${error.message}`);
     const id = data?.id;
-    const ts = event_time || timestamp;
 
     try {
-      const text = recordToText(entry_type, { ...row, event_time: row.event_time || timestamp });
+      const text = recordToText(entry_type, { ...row, timestamp: row.timestamp });
       const embedding = await getEmbedding(text);
       await supabase.from("health_entries").update({ embedding }).eq("id", id);
     } catch { /* non-blocking */ }
 
-    return `Health entry logged: ${entry_type} at ${new Date(ts).toLocaleString()}`;
+    return `Health entry logged: ${entry_type} at ${new Date(timestamp).toLocaleString()}`;
   })
 );
 
@@ -701,32 +696,32 @@ server.registerTool(
       entry_type: z.string().optional().describe("Filter by type"),
       days: z.number().optional().describe("Last N days"),
       limit: z.number().optional().default(20),
-      event_from: z.string().optional().describe("Filter from event_time (ISO 8601)"),
-      event_to: z.string().optional().describe("Filter to event_time (ISO 8601)"),
+      event_from: z.string().optional().describe("Filter from timestamp (ISO 8601)"),
+      event_to: z.string().optional().describe("Filter to timestamp (ISO 8601)"),
     },
   },
   wrapHandler(async ({ entry_type, days, limit, event_from, event_to }) => {
     let q = supabase
       .from("health_entries")
-      .select("entry_type, timestamp, event_time, duration_s, numeric_value, value, tags")
-      .order("event_time", { ascending: false, nullsFirst: false })
+      .select("entry_type, timestamp, duration_s, numeric_value, value, tags")
+      .order("timestamp", { ascending: false })
       .limit(limit);
 
     if (entry_type) q = q.eq("entry_type", entry_type);
     if (days) {
       const since = new Date();
       since.setDate(since.getDate() - days);
-      q = q.gte("event_time", since.toISOString());
+      q = q.gte("timestamp", since.toISOString());
     }
-    if (event_from) q = q.gte("event_time", event_from);
-    if (event_to) q = q.lte("event_time", event_to);
+    if (event_from) q = q.gte("timestamp", event_from);
+    if (event_to) q = q.lte("timestamp", event_to);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);
     if (!data?.length) return "No health entries found.";
 
     const results = data.map((e: any, i: number) => {
-      const ts = new Date(e.event_time || e.timestamp).toLocaleString();
+      const ts = new Date(e.timestamp).toLocaleString();
       const dur = e.duration_s ? ` (${Math.round(e.duration_s / 60)}min)` : "";
       const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
       return `${i + 1}. [${ts}] ${e.entry_type}${dur}${numVal}\n   ${JSON.stringify(e.value)}`;
@@ -766,7 +761,7 @@ server.registerTool(
         const parts = [
           `--- ${i + 1}. ${(t.similarity * 100).toFixed(1)}% match ---`,
           `Type: ${t.entry_type}`,
-          `Date: ${new Date(t.event_time || t.timestamp).toLocaleString()}`,
+          `Date: ${new Date(t.timestamp).toLocaleString()}`,
         ];
         if (t.numeric_value != null) parts.push(`Value: ${t.numeric_value}`);
         if (t.duration_s) parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
@@ -798,12 +793,10 @@ server.registerTool(
       rpe: z.number().optional().describe("Overall RPE 1-10"),
       notes: z.string().optional(),
       tags: z.array(z.string()).optional(),
-      event_time: z.string().optional().describe("ISO 8601 timestamp for when the workout actually happened"),
-      ingestion_source: z.string().optional().describe("Source system: iron-log, health-connect, mcp"),
       external_id: z.string().optional().describe("External record ID from source system for upsert dedup"),
     },
   },
-  wrapHandler(async ({ workout_date, workout_type, name, exercises, duration_s, volume_kg, rpe, notes, tags, event_time, ingestion_source, external_id }) => {
+  wrapHandler(async ({ workout_date, workout_type, name, exercises, duration_s, volume_kg, rpe, notes, tags, external_id }) => {
     const row: Record<string, unknown> = {
       workout_date,
       workout_type,
@@ -815,8 +808,6 @@ server.registerTool(
       notes: notes || null,
       tags: tags || [],
     };
-    if (event_time !== undefined) row.event_time = event_time;
-    if (ingestion_source !== undefined) row.ingestion_source = ingestion_source;
     if (external_id !== undefined) row.external_id = external_id;
 
     const { data, error } = await supabase
@@ -829,7 +820,7 @@ server.registerTool(
     const id = data?.id;
 
     try {
-      const text = workoutToText({ ...row, event_time: row.event_time || workout_date });
+      const text = workoutToText({ ...row });
       const embedding = await getEmbedding(text);
       await supabase.from("training_logs").update({ embedding }).eq("id", id);
     } catch { /* non-blocking */ }
@@ -852,8 +843,8 @@ server.registerTool(
   wrapHandler(async ({ workout_type, days, limit }) => {
     let q = supabase
       .from("training_logs")
-      .select("workout_date, workout_type, name, exercises, volume_kg, rpe, notes, event_time")
-      .order("event_time", { ascending: false, nullsFirst: false })
+      .select("workout_date, workout_type, name, exercises, volume_kg, rpe, notes")
+      .order("workout_date", { ascending: false })
       .limit(limit);
 
     if (workout_type) q = q.eq("workout_type", workout_type);
@@ -974,6 +965,7 @@ server.registerTool(
       if (s.exercise_count > 0) parts.push(`Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""}`);
       if (s.workout_count > 0) parts.push(`Training: ${s.workout_count} workouts${s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""}${s.training_types?.length ? ` [${s.training_types.join(", ")}]` : ""}`);
       if (s.sources?.length) parts.push(`Sources: ${s.sources.join(", ")}`);
+      if (s.computed_at) parts.push(`Computed: ${new Date(s.computed_at).toLocaleString()}`);
       return parts.join("\n");
     });
 
@@ -1111,7 +1103,6 @@ server.registerTool(
     const lines = [
       `== ${entity.name} (${entity.entity_type}) ==`,
       entity.description ? `Description: ${entity.description}` : "",
-      entity.aliases?.length ? `Aliases: ${entity.aliases.join(", ")}` : "",
       `Created: ${new Date(entity.created_at).toLocaleDateString()}`,
       `Mentioned in ${(mentions || []).length} memories`,
     ].filter(Boolean);

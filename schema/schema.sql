@@ -36,9 +36,7 @@ CREATE TABLE memories (
     importance  SMALLINT DEFAULT 5 CHECK (importance BETWEEN 1 AND 10),
     tags        TEXT[] DEFAULT '{}',
     people      TEXT[] DEFAULT '{}',
-    dates       TEXT[] DEFAULT '{}',
     metadata    JSONB DEFAULT '{}',
-    content_fingerprint TEXT,
     created_at  TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at  TIMESTAMPTZ DEFAULT now() NOT NULL
 );
@@ -52,7 +50,6 @@ CREATE TABLE projects (
     description TEXT,
     stack       TEXT[] DEFAULT '{}',
     conventions JSONB DEFAULT '{}',
-    decisions   JSONB DEFAULT '[]',
     status      TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'archived')),
     metadata    JSONB DEFAULT '{}',
     created_at  TIMESTAMPTZ DEFAULT now() NOT NULL,
@@ -79,14 +76,12 @@ CREATE TABLE health_entries (
                             'stress', 'cycle', 'body_composition'
                         )),
     timestamp           TIMESTAMPTZ NOT NULL,
-    event_time          TIMESTAMPTZ,
     duration_s          INTEGER,
     value               JSONB NOT NULL DEFAULT '{}',
     numeric_value       NUMERIC,
     embedding           vector(1536),
     tags                TEXT[] DEFAULT '{}',
     source              TEXT DEFAULT 'health-connect',
-    ingestion_source    TEXT,
     external_id         TEXT,
     metadata            JSONB DEFAULT '{}',
     created_at          TIMESTAMPTZ DEFAULT now() NOT NULL
@@ -97,16 +92,15 @@ CREATE TABLE training_logs (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID REFERENCES auth.users(id),
     workout_date        DATE NOT NULL,
-    event_time          TIMESTAMPTZ,
     workout_type        TEXT NOT NULL,
     name                TEXT NOT NULL,
     exercises           JSONB NOT NULL DEFAULT '[]',
     duration_s          INTEGER,
     volume_kg           NUMERIC(8,2),
+    numeric_value       NUMERIC,
     rpe                 SMALLINT CHECK (rpe BETWEEN 1 AND 10),
     notes               TEXT,
     tags                TEXT[] DEFAULT '{}',
-    ingestion_source    TEXT,
     external_id         TEXT,
     embedding           vector(1536),
     metadata            JSONB DEFAULT '{}',
@@ -148,7 +142,6 @@ CREATE TABLE entities (
                     'technology', 'organization', 'event', 'other'
                 )),
     description TEXT,
-    aliases     TEXT[] DEFAULT '{}',
     metadata    JSONB DEFAULT '{}',
     created_at  TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at  TIMESTAMPTZ DEFAULT now() NOT NULL,
@@ -197,13 +190,12 @@ CREATE INDEX idx_memories_category ON memories (category);
 CREATE INDEX idx_memories_source ON memories (source);
 CREATE INDEX idx_memories_importance ON memories (importance DESC);
 CREATE INDEX idx_memories_created ON memories (created_at DESC);
-CREATE UNIQUE INDEX idx_memories_fingerprint
-    ON memories (content_fingerprint)
-    WHERE content_fingerprint IS NOT NULL;
+CREATE INDEX idx_memories_user_id ON memories(user_id);
 
 -- Projects
 CREATE INDEX idx_projects_name ON projects (name);
 CREATE INDEX idx_projects_status ON projects (status);
+CREATE INDEX idx_projects_user_id ON projects(user_id);
 
 -- Profile
 CREATE UNIQUE INDEX profile_key_owner_unique ON profile (key, owner_id)
@@ -215,24 +207,18 @@ CREATE UNIQUE INDEX profile_key_null_owner ON profile (key)
 CREATE INDEX idx_health_type_ts ON health_entries (entry_type, timestamp DESC);
 CREATE INDEX idx_health_timestamp ON health_entries (timestamp DESC);
 CREATE INDEX idx_health_metadata ON health_entries USING gin (metadata);
-CREATE INDEX idx_health_event_time ON health_entries (event_time DESC);
 CREATE INDEX idx_health_type_numeric ON health_entries (entry_type, numeric_value DESC);
+CREATE INDEX idx_health_entries_user_id ON health_entries(user_id);
 CREATE INDEX idx_health_entries_embedding ON health_entries
     USING hnsw (embedding vector_cosine_ops);
-CREATE UNIQUE INDEX idx_health_external_id
-    ON health_entries (ingestion_source, external_id)
-    WHERE external_id IS NOT NULL;
 
 -- Training logs
 CREATE INDEX idx_training_date ON training_logs (workout_date DESC);
 CREATE INDEX idx_training_type ON training_logs (workout_type);
 CREATE INDEX idx_training_metadata ON training_logs USING gin (metadata);
-CREATE INDEX idx_training_event_time ON training_logs (event_time DESC);
+CREATE INDEX idx_training_logs_user_id ON training_logs(user_id);
 CREATE INDEX idx_training_logs_embedding ON training_logs
     USING hnsw (embedding vector_cosine_ops);
-CREATE UNIQUE INDEX idx_training_external_id
-    ON training_logs (ingestion_source, external_id)
-    WHERE external_id IS NOT NULL;
 
 -- Health summaries
 CREATE INDEX idx_health_summaries_date ON health_summaries (date DESC);
@@ -303,7 +289,7 @@ DECLARE
 BEGIN
     v_fingerprint := encode(sha256(p_content::bytea), 'hex');
     SELECT to_jsonb(m) INTO v_existing
-    FROM memories m WHERE m.content_fingerprint = v_fingerprint;
+    FROM memories m WHERE m.content = p_content;
     IF v_existing IS NOT NULL THEN
         v_merged_meta := COALESCE(v_existing->'metadata', '{}') || p_metadata;
         UPDATE memories SET
@@ -315,8 +301,8 @@ BEGIN
         WHERE id = (v_existing->>'id')::UUID;
         RETURN jsonb_build_object('id', v_existing->>'id', 'status', 'updated');
     END IF;
-    INSERT INTO memories (content, title, category, source, importance, tags, people, metadata, content_fingerprint)
-    VALUES (p_content, p_title, p_category, p_source, p_importance, p_tags, p_people, p_metadata, v_fingerprint)
+    INSERT INTO memories (content, title, category, source, importance, tags, people, metadata)
+    VALUES (p_content, p_title, p_category, p_source, p_importance, p_tags, p_people, p_metadata)
     RETURNING jsonb_build_object('id', id, 'status', 'created') INTO v_new_id;
     RETURN v_new_id;
 END;
@@ -351,8 +337,7 @@ BEGIN
     INTO v_sleep_total, v_sleep_sessions
     FROM health_entries
     WHERE entry_type = 'sleep'
-      AND (event_time IS NOT NULL AND event_time::date = target_date
-           OR event_time IS NULL AND timestamp::date = target_date);
+      AND timestamp::date = target_date;
 
     -- Steps
     SELECT
@@ -362,8 +347,7 @@ BEGIN
     INTO v_steps_total, v_hr_samples, v_steps_active
     FROM health_entries
     WHERE entry_type = 'steps'
-      AND (event_time IS NOT NULL AND event_time::date = target_date
-           OR event_time IS NULL AND timestamp::date = target_date);
+      AND timestamp::date = target_date;
 
     -- Heart rate
     SELECT
@@ -375,8 +359,7 @@ BEGIN
     FROM health_entries
     WHERE entry_type = 'heart_rate'
       AND numeric_value IS NOT NULL
-      AND (event_time IS NOT NULL AND event_time::date = target_date
-           OR event_time IS NULL AND timestamp::date = target_date);
+      AND timestamp::date = target_date;
 
     -- Weight (latest reading for the day)
     SELECT numeric_value
@@ -384,9 +367,8 @@ BEGIN
     FROM health_entries
     WHERE entry_type = 'weight'
       AND numeric_value IS NOT NULL
-      AND (event_time IS NOT NULL AND event_time::date = target_date
-           OR event_time IS NULL AND timestamp::date = target_date)
-    ORDER BY event_time DESC NULLS LAST, timestamp DESC
+      AND timestamp::date = target_date
+    ORDER BY timestamp DESC
     LIMIT 1;
 
     -- Exercise
@@ -397,8 +379,7 @@ BEGIN
     INTO v_ex_count, v_ex_minutes, v_ex_types
     FROM health_entries
     WHERE entry_type = 'exercise'
-      AND (event_time IS NOT NULL AND event_time::date = target_date
-           OR event_time IS NULL AND timestamp::date = target_date);
+      AND timestamp::date = target_date;
 
     -- Training (from training_logs)
     SELECT
@@ -410,14 +391,13 @@ BEGIN
     WHERE workout_date = target_date;
 
     -- Collect unique sources
-    SELECT ARRAY_AGG(DISTINCT COALESCE(ingestion_source, source))
+    SELECT ARRAY_AGG(DISTINCT source)
     INTO v_sources
     FROM (
-        SELECT ingestion_source, source FROM health_entries
-        WHERE (event_time IS NOT NULL AND event_time::date = target_date
-               OR event_time IS NULL AND timestamp::date = target_date)
+        SELECT source FROM health_entries
+        WHERE timestamp::date = target_date
         UNION ALL
-        SELECT ingestion_source, 'iron-log'::TEXT FROM training_logs
+        SELECT 'iron-log'::TEXT FROM training_logs
         WHERE workout_date = target_date
     ) combined;
 
@@ -484,16 +464,16 @@ CREATE OR REPLACE FUNCTION search_health_entries(
     filter_entry_type TEXT DEFAULT NULL
 )
 RETURNS TABLE (
-    id UUID, entry_type TEXT, timestamp TIMESTAMPTZ, event_time TIMESTAMPTZ,
+    id UUID, entry_type TEXT, timestamp TIMESTAMPTZ,
     duration_s INTEGER, numeric_value NUMERIC, value JSONB, tags TEXT[],
-    source TEXT, ingestion_source TEXT, similarity FLOAT
+    source TEXT, similarity FLOAT
 )
 LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
-    SELECT h.id, h.entry_type, h.timestamp, h.event_time,
+    SELECT h.id, h.entry_type, h.timestamp,
         h.duration_s, h.numeric_value, h.value, h.tags,
-        h.source, h.ingestion_source,
+        h.source,
         1 - (h.embedding <=> query_embedding) AS similarity
     FROM health_entries h
     WHERE h.embedding IS NOT NULL
@@ -513,14 +493,14 @@ CREATE OR REPLACE FUNCTION search_training_logs(
 )
 RETURNS TABLE (
     id UUID, workout_date DATE, workout_type TEXT, name TEXT,
-    exercises JSONB, volume_kg NUMERIC, rpe SMALLINT, notes TEXT,
+    exercises JSONB, volume_kg NUMERIC, numeric_value NUMERIC, rpe SMALLINT, notes TEXT,
     tags TEXT[], duration_s INTEGER, similarity FLOAT
 )
 LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
     SELECT t.id, t.workout_date, t.workout_type, t.name,
-        t.exercises, t.volume_kg, t.rpe, t.notes,
+        t.exercises, t.volume_kg, t.numeric_value, t.rpe, t.notes,
         t.tags, t.duration_s,
         1 - (t.embedding <=> query_embedding) AS similarity
     FROM training_logs t

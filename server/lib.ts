@@ -63,11 +63,9 @@ function formatNum(n: unknown): string {
 }
 
 export function recordToText(type: string, record: Record<string, unknown>): string {
-  const date = record.event_time
-    ? new Date(record.event_time as string).toLocaleDateString()
-    : record.timestamp
-      ? new Date(record.timestamp as string).toLocaleDateString()
-      : "unknown date";
+  const date = record.timestamp
+    ? new Date(record.timestamp as string).toLocaleDateString()
+    : "unknown date";
   const v = record.value as Record<string, unknown> | undefined;
 
   switch (type) {
@@ -80,7 +78,7 @@ export function recordToText(type: string, record: Record<string, unknown>): str
       return `On ${date}, slept ${hrs} hours${bed}${wake}`;
     }
     case "heart_rate":
-      return `Heart rate of ${formatNum(record.numeric_value)} bpm at ${new Date((record.event_time || record.timestamp) as string).toLocaleString()}`;
+      return `Heart rate of ${formatNum(record.numeric_value)} bpm at ${new Date(record.timestamp as string).toLocaleString()}`;
     case "weight":
       return `Weight: ${formatNum(record.numeric_value)} kg on ${date}`;
     case "blood_pressure": {
@@ -109,9 +107,7 @@ export function recordToText(type: string, record: Record<string, unknown>): str
 }
 
 export function workoutToText(record: Record<string, unknown>): string {
-  const date = record.event_time
-    ? new Date(record.event_time as string).toLocaleDateString()
-    : record.workout_date as string || "unknown date";
+  const date = record.workout_date as string || "unknown date";
   const name = record.name as string || "Workout";
   const type = record.workout_type as string || "other";
   const exercises = record.exercises as Array<Record<string, unknown>> | undefined;
@@ -127,6 +123,7 @@ export function workoutToText(record: Record<string, unknown>): string {
     parts.push(exStr);
   }
   if (record.volume_kg != null) parts.push(`total volume ${record.volume_kg}kg`);
+  if (record.numeric_value != null) parts.push(`value ${record.numeric_value}`);
   if (record.rpe != null) parts.push(`RPE ${record.rpe}`);
   if (record.duration_s) parts.push(`duration ${Math.round((record.duration_s as number) / 60)}min`);
 

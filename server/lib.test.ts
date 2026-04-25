@@ -160,7 +160,7 @@ Deno.test("sanitizeClassification filters falsy and whitespace tags", () => {
 
 Deno.test("recordToText handles steps", () => {
   const result = recordToText("steps", {
-    event_time: "2025-01-15T12:00:00Z",
+    timestamp: "2025-01-15T12:00:00Z",
     numeric_value: 8500,
     duration_s: 3600,
   });
@@ -172,7 +172,7 @@ Deno.test("recordToText handles steps", () => {
 
 Deno.test("recordToText handles sleep", () => {
   const result = recordToText("sleep", {
-    event_time: "2025-01-15T07:00:00Z",
+    timestamp: "2025-01-15T07:00:00Z",
     numeric_value: 7.5,
     value: { duration_hours: 7.5, bed_time: "23:00", wake_time: "06:30" },
   });
@@ -183,7 +183,7 @@ Deno.test("recordToText handles sleep", () => {
 
 Deno.test("recordToText handles heart_rate", () => {
   const result = recordToText("heart_rate", {
-    event_time: "2025-01-15T08:00:00Z",
+    timestamp: "2025-01-15T08:00:00Z",
     numeric_value: 72,
   });
   assertExists(result);
@@ -193,7 +193,7 @@ Deno.test("recordToText handles heart_rate", () => {
 
 Deno.test("recordToText handles weight", () => {
   const result = recordToText("weight", {
-    event_time: "2025-01-15T08:00:00Z",
+    timestamp: "2025-01-15T08:00:00Z",
     numeric_value: 75.5,
   });
   assertExists(result);
@@ -203,7 +203,7 @@ Deno.test("recordToText handles weight", () => {
 
 Deno.test("recordToText handles exercise", () => {
   const result = recordToText("exercise", {
-    event_time: "2025-01-15T10:00:00Z",
+    timestamp: "2025-01-15T10:00:00Z",
     numeric_value: 45,
     duration_s: 2700,
   });
@@ -264,10 +264,9 @@ Deno.test("workoutToText handles workouts with no exercises", () => {
   assertEquals(result.includes("Rest Day"), true);
 });
 
-Deno.test("workoutToText uses event_time over workout_date", () => {
+Deno.test("workoutToText uses workout_date for date", () => {
   const result = workoutToText({
-    event_time: "2025-03-20T10:00:00Z",
-    workout_date: "2025-01-01",
+    workout_date: "2025-03-20",
     name: "Morning Run",
     workout_type: "cardio",
     duration_s: 1800,
@@ -336,4 +335,28 @@ Deno.test("VALID_SOURCES contains expected sources", () => {
   ];
   assertEquals([...VALID_SOURCES], expected);
   assertEquals(VALID_SOURCES.length, 7);
+});
+
+// --- numeric_value in training_logs context ---
+
+Deno.test("workoutToText includes numeric_value when present", () => {
+  const result = workoutToText({
+    workout_date: "2025-06-01",
+    name: "Tempo Run",
+    workout_type: "cardio",
+    numeric_value: 5.2,
+    exercises: [{ name: "Running", distance_km: 5.2 }],
+  });
+  assertExists(result);
+  assertEquals(result.includes("5.2"), true);
+});
+
+Deno.test("recordToText uses timestamp fallback correctly", () => {
+  const result = recordToText("steps", {
+    timestamp: "2025-07-04T12:00:00Z",
+    numeric_value: 10000,
+  });
+  assertExists(result);
+  assertEquals(result.includes("10,000"), true);
+  assertEquals(result.includes("steps"), true);
 });
