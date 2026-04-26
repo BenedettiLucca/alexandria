@@ -73,7 +73,8 @@ CREATE TABLE health_entries (
                         CHECK (entry_type IN (
                             'sleep', 'exercise', 'heart_rate', 'steps',
                             'weight', 'water', 'nutrition', 'blood_pressure',
-                            'stress', 'cycle', 'body_composition'
+                            'stress', 'cycle', 'body_composition',
+                            'personal_record', 'measurement_goal'
                         )),
     timestamp           TIMESTAMPTZ NOT NULL,
     duration_s          INTEGER,

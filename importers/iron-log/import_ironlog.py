@@ -2,8 +2,8 @@
 """
 Iron Log -> Alexandria Importer
 
-Reads ironlog.db (SQLite) and imports workout data into Alexandria's
-Supabase backend via the REST API.
+Reads ironlog.db (SQLite) or ironlog-export.json and imports workout data
+into Alexandria's Supabase backend via the REST API.
 
 Requirements: pip install supabase requests
 """
@@ -11,6 +11,7 @@ Requirements: pip install supabase requests
 import sys
 import os
 import sqlite3
+import json
 from datetime import datetime, timezone
 from hashlib import sha256
 
@@ -32,6 +33,7 @@ def import_sessions(db_path, supabase):
         SELECT s.*, r.name as routine_name
         FROM sessions s
         LEFT JOIN routines r ON s.routine_id = r.id
+        WHERE s.deleted_at IS NULL
         ORDER BY s.start_time
     """).fetchall()
 
@@ -42,7 +44,7 @@ def import_sessions(db_path, supabase):
         sets = conn.execute(
             """
             SELECT * FROM sets
-            WHERE session_id = ?
+            WHERE session_id = ? AND deleted_at IS NULL
             ORDER BY exercise_name, set_number
         """,
             (session["id"],),
@@ -90,7 +92,7 @@ def import_sessions(db_path, supabase):
             SELECT DISTINCT e.type
             FROM sets s
             JOIN exercises e ON s.exercise_id = e.id
-            WHERE s.session_id = ?
+            WHERE s.session_id = ? AND s.deleted_at IS NULL
         """,
             (session["id"],),
         ).fetchall()
@@ -214,9 +216,139 @@ def import_body_metrics(db_path, supabase):
     return imported, skipped
 
 
+def import_personal_records(prs, supabase):
+    imported = 0
+    skipped = 0
+
+    for pr in prs:
+        ext_id = pr.get("external_id")
+        if not ext_id:
+            skipped += 1
+            continue
+
+        record = {
+            "entry_type": "personal_record",
+            "timestamp": pr.get("date"),
+            "numeric_value": pr.get("value"),
+            "value": {
+                "exercise_name": pr.get("exercise_name"),
+                "record_type": pr.get("record_type"),
+                "weight_kg": pr.get("weight_kg"),
+                "reps": pr.get("reps"),
+                "estimated_1rm": pr.get("estimated_1rm"),
+            },
+            "source": "iron-log",
+            "external_id": ext_id,
+            "tags": ["iron-log", "personal-record", pr.get("record_type", "")],
+        }
+
+        upsert_record(supabase, "health_entries", record, "iron-log", ext_id)
+        imported += 1
+        print(
+            f"  Imported PR: {pr.get('exercise_name')} - {pr.get('record_type')} ({pr.get('value')})"
+        )
+
+    print(f"Personal records: {imported} imported, {skipped} skipped")
+    return imported, skipped
+
+
+def import_measurement_goals(goals, supabase):
+    imported = 0
+    skipped = 0
+
+    for goal in goals:
+        ext_id = goal.get("external_id")
+        if not ext_id:
+            skipped += 1
+            continue
+
+        record = {
+            "entry_type": "measurement_goal",
+            "timestamp": goal.get("target_date"),
+            "numeric_value": goal.get("target_value"),
+            "value": {
+                "goal_type": goal.get("type"),
+                "target_value": goal.get("target_value"),
+                "start_date": goal.get("start_date"),
+                "target_date": goal.get("target_date"),
+                "achieved": goal.get("achieved"),
+            },
+            "source": "iron-log",
+            "external_id": ext_id,
+            "tags": ["iron-log", "measurement-goal"],
+        }
+
+        upsert_record(supabase, "health_entries", record, "iron-log", ext_id)
+        imported += 1
+        print(f"  Imported goal: {goal.get('type')} -> {goal.get('target_value')}")
+
+    print(f"Measurement goals: {imported} imported, {skipped} skipped")
+    return imported, skipped
+
+
+def import_from_json(json_path, supabase):
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    total_imported = 0
+    total_skipped = 0
+
+    sessions = data.get("sessions", [])
+    if sessions:
+        print(f"\n--- Importing {len(sessions)} Sessions (JSON) ---")
+        s_imported = 0
+        s_skipped = 0
+        for session in sessions:
+            ext_id = session.get("external_id")
+            if not ext_id:
+                s_skipped += 1
+                continue
+            upsert_record(supabase, "training_logs", session, "iron-log", ext_id)
+            s_imported += 1
+            print(f"  Imported: {session.get('workout_date')} - {session.get('name')}")
+        print(f"\nSessions: {s_imported} imported, {s_skipped} skipped")
+        total_imported += s_imported
+        total_skipped += s_skipped
+
+    body_metrics = data.get("body_metrics", [])
+    if body_metrics:
+        print(f"\n--- Importing {len(body_metrics)} Body Metrics (JSON) ---")
+        m_imported = 0
+        m_skipped = 0
+        for metric in body_metrics:
+            ext_id = metric.get("external_id")
+            if not ext_id:
+                m_skipped += 1
+                continue
+            upsert_record(supabase, "health_entries", metric, "iron-log", ext_id)
+            m_imported += 1
+            print(f"  Imported: {metric.get('entry_type')} - {metric.get('timestamp')}")
+        print(f"\nBody metrics: {m_imported} imported, {m_skipped} skipped")
+        total_imported += m_imported
+        total_skipped += m_skipped
+
+    personal_records = data.get("personal_records", [])
+    if personal_records:
+        print(f"\n--- Importing {len(personal_records)} Personal Records (JSON) ---")
+        pr_imported, pr_skipped = import_personal_records(personal_records, supabase)
+        total_imported += pr_imported
+        total_skipped += pr_skipped
+
+    measurement_goals = data.get("measurement_goals", [])
+    if measurement_goals:
+        print(f"\n--- Importing {len(measurement_goals)} Measurement Goals (JSON) ---")
+        g_imported, g_skipped = import_measurement_goals(measurement_goals, supabase)
+        total_imported += g_imported
+        total_skipped += g_skipped
+
+    return total_imported, total_skipped
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 import_ironlog.py <path/to/ironlog.db>")
+        print(
+            "Usage: python3 import_ironlog.py <path/to/ironlog.db|ironlog-export.json>"
+        )
         sys.exit(1)
 
     db_path = sys.argv[1]
@@ -228,14 +360,18 @@ def main():
     print(f"Importing from {db_path}...")
     supabase = connect_supabase()
 
-    print("\n--- Importing Sessions ---")
-    s_imported, s_skipped = import_sessions(db_path, supabase)
+    if db_path.endswith(".json"):
+        total_imported, total_skipped = import_from_json(db_path, supabase)
+    else:
+        print("\n--- Importing Sessions ---")
+        s_imported, s_skipped = import_sessions(db_path, supabase)
 
-    print("\n--- Importing Body Metrics ---")
-    m_imported, m_skipped = import_body_metrics(db_path, supabase)
+        print("\n--- Importing Body Metrics ---")
+        m_imported, m_skipped = import_body_metrics(db_path, supabase)
 
-    total_imported = s_imported + m_imported
-    total_skipped = s_skipped + m_skipped
+        total_imported = s_imported + m_imported
+        total_skipped = s_skipped + m_skipped
+
     total_processed = total_imported + total_skipped
 
     record_sync(
