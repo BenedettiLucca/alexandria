@@ -414,13 +414,7 @@ server.registerTool(
     title: "Search Memories",
     description:
       "Search memories by semantic meaning. Use when the user asks about something they've previously noted, decided, or referenced.",
-    inputSchema: {
-      query: z.string().describe("Natural language search query"),
-      limit: z.number().optional().default(10),
-      threshold: z.number().optional().default(0.5),
-      category: z.string().optional().describe("Filter by category"),
-      tags: z.array(z.string()).optional().describe("Filter by tags"),
-    },
+    inputSchema: { query: z.string().describe("Natural language search query"), limit: z.number().optional().default(10), threshold: z.number().optional().default(0.5), category: z.string().optional().describe("Filter by category"), tags: z.array(z.string()).optional().describe("Filter by tags"),}
   },
   wrapHandler(async ({ query, limit, threshold, category, tags }) => {
     const qEmb = await getEmbedding(query);
@@ -470,20 +464,7 @@ server.registerTool(
     title: "Capture Memory",
     description:
       "Save a new memory to Alexandria. Auto-generates embedding, classifies category/tags/importance, and deduplicates. Use when the user wants to save a note, idea, decision, or any piece of knowledge.",
-    inputSchema: {
-      content: z.string().describe(
-        "The memory content -- a clear, standalone statement",
-      ),
-      title: z.string().optional().describe(
-        "Optional title (auto-generated if omitted)",
-      ),
-      category: z.string().optional().describe("Override auto-classification"),
-      importance: z.number().optional().describe(
-        "Override auto-importance (1-10)",
-      ),
-      tags: z.array(z.string()).optional().describe("Additional tags"),
-      people: z.array(z.string()).optional().describe("People mentioned"),
-    },
+    inputSchema: { content: z.string().describe( "The memory content -- a clear, standalone statement", ), title: z.string().optional().describe( "Optional title (auto-generated if omitted)", ), category: z.string().optional().describe("Override auto-classification"), importance: z.number().optional().describe( "Override auto-importance (1-10)", ), tags: z.array(z.string()).optional().describe("Additional tags"), people: z.array(z.string()).optional().describe("People mentioned"),}
   },
   wrapHandler(
     async ({ content, title, category, importance, tags, people }) => {
@@ -561,20 +542,7 @@ server.registerTool(
     title: "List Recent Memories",
     description:
       "List memories with optional filters. Use when the user wants to browse recent memories or filter by category, tag, source, or time range.",
-    inputSchema: {
-      limit: z.number().optional().default(10),
-      category: z.string().optional().describe(
-        "Filter: note, idea, decision, observation, reference, task, person, recipe, travel, purchase, quote",
-      ),
-      tag: z.string().optional().describe("Filter by single tag"),
-      source: z.string().optional().describe(
-        "Filter by source: manual, mcp, import, capture, health-connect, iron-log, auto",
-      ),
-      days: z.number().optional().describe("Only memories from last N days"),
-      importance_min: z.number().optional().describe(
-        "Minimum importance (1-10)",
-      ),
-    },
+    inputSchema: { limit: z.number().optional().default(10), category: z.string().optional().describe( "Filter: note, idea, decision, observation, reference, task, person, recipe, travel, purchase, quote", ), tag: z.string().optional().describe("Filter by single tag"), source: z.string().optional().describe( "Filter by source: manual, mcp, import, capture, health-connect, iron-log, auto", ), days: z.number().optional().describe("Only memories from last N days"), importance_min: z.number().optional().describe( "Minimum importance (1-10)", ),}
   },
   wrapHandler(
     async ({ limit, category, tag, source, days, importance_min }) => {
@@ -627,7 +595,7 @@ server.registerTool(
     title: "Memory Statistics",
     description:
       "Summary of all memories: totals by category, top tags, people mentioned, date range.",
-    inputSchema: {},
+    inputSchema: {}
   },
   wrapHandler(async () => {
     const { count } = await supabase
@@ -698,11 +666,7 @@ server.registerTool(
     title: "Get Profile",
     description:
       "Retrieve profile data. Use when you need to know about the user's identity, preferences, development stack, environment, or other stored profile data.",
-    inputSchema: {
-      key: z.string().optional().describe(
-        "Specific profile key (e.g. 'identity', 'preferences', 'stack'). Omit for all.",
-      ),
-    },
+    inputSchema: { key: z.string().optional().describe( "Specific profile key (e.g. 'identity', 'preferences', 'stack'). Omit for all.", ),}
   },
   wrapHandler(async ({ key }) => {
     const client = getUserClient(currentAuth);
@@ -746,12 +710,7 @@ server.registerTool(
     title: "Set Profile",
     description:
       "Create or update a profile section. Use when the user tells you about themselves, their preferences, their stack, or any persistent identity information.",
-    inputSchema: {
-      key: z.string().describe(
-        "Profile section key (e.g. 'identity', 'preferences', 'stack', 'environment')",
-      ),
-      value: z.record(z.any()).describe("Profile data as a JSON object"),
-    },
+    inputSchema: { key: z.string().describe( "Profile section key (e.g. 'identity', 'preferences', 'stack', 'environment')", ), value: z.record(z.any()).describe("Profile data as a JSON object"),}
   },
   wrapHandler(async ({ key, value }) => {
     const client = getUserClient(currentAuth);
@@ -786,7 +745,7 @@ server.registerTool(
     title: "Auth Status",
     description:
       "Return the current authentication context: user ID, email, auth method (JWT or API key), and profile sections.",
-    inputSchema: {},
+    inputSchema: {}
   },
   wrapHandler(async () => {
     const auth = currentAuth;
@@ -823,11 +782,7 @@ server.registerTool(
   {
     title: "List Projects",
     description: "List tracked projects and their status.",
-    inputSchema: {
-      status: z.string().optional().describe(
-        "Filter: active, paused, archived",
-      ),
-    },
+    inputSchema: { status: z.string().optional().describe( "Filter: active, paused, archived", ),}
   },
   wrapHandler(async ({ status }) => {
     const data = await queryTable(
@@ -860,18 +815,7 @@ server.registerTool(
     title: "Save Project",
     description:
       "Create or update a project record. Use when onboarding a new codebase or updating project context.",
-    inputSchema: {
-      name: z.string().describe("Project name"),
-      path: z.string().optional().describe("Filesystem path"),
-      description: z.string().optional().describe("What this project does"),
-      stack: z.array(z.string()).optional().describe(
-        "Tech stack (e.g. ['python', 'fastapi', 'postgres'])",
-      ),
-      conventions: z.record(z.any()).optional().describe(
-        "Coding conventions (commit style, linting, testing)",
-      ),
-      status: z.string().optional().describe("active, paused, or archived"),
-    },
+    inputSchema: { name: z.string().describe("Project name"), path: z.string().optional().describe("Filesystem path"), description: z.string().optional().describe("What this project does"), stack: z.array(z.string()).optional().describe( "Tech stack (e.g. ['python', 'fastapi', 'postgres'])", ), conventions: z.record(z.any()).optional().describe( "Coding conventions (commit style, linting, testing)", ), status: z.string().optional().describe("active, paused, or archived"),}
   },
   wrapHandler(
     async ({ name, path, description, stack, conventions, status }) => {
@@ -917,21 +861,7 @@ server.registerTool(
     title: "Log Health Entry",
     description:
       "Record a health data point. Use for manual logging or data imports from Health Connect.",
-    inputSchema: {
-      entry_type: z.string().describe(
-        "Type: sleep, exercise, heart_rate, steps, weight, water, nutrition, blood_pressure, stress, cycle, body_composition",
-      ),
-      timestamp: z.string().describe("ISO 8601 timestamp"),
-      duration_s: z.number().optional().describe("Duration in seconds"),
-      value: z.record(z.any()).describe("Health data as JSON (varies by type)"),
-      tags: z.array(z.string()).optional(),
-      numeric_value: z.number().optional().describe(
-        "Primary numeric value (e.g. bpm for heart_rate, kg for weight, duration_hours for sleep)",
-      ),
-      external_id: z.string().optional().describe(
-        "External record ID from source system for upsert dedup",
-      ),
-    },
+    inputSchema: { entry_type: z.string().describe( "Type: sleep, exercise, heart_rate, steps, weight, water, nutrition, blood_pressure, stress, cycle, body_composition", ), timestamp: z.string().describe("ISO 8601 timestamp"), duration_s: z.number().optional().describe("Duration in seconds"), value: z.record(z.any()).describe("Health data as JSON (varies by type)"), tags: z.array(z.string()).optional(), numeric_value: z.number().optional().describe( "Primary numeric value (e.g. bpm for heart_rate, kg for weight, duration_hours for sleep)", ), external_id: z.string().optional().describe( "External record ID from source system for upsert dedup", ),}
   },
   wrapHandler(
     async (
@@ -990,17 +920,7 @@ server.registerTool(
     title: "Query Health Data",
     description:
       "Search and filter health entries. Use when the user asks about their health history.",
-    inputSchema: {
-      entry_type: z.string().optional().describe("Filter by type"),
-      days: z.number().optional().describe("Last N days"),
-      limit: z.number().optional().default(20),
-      event_from: z.string().optional().describe(
-        "Filter from timestamp (ISO 8601)",
-      ),
-      event_to: z.string().optional().describe(
-        "Filter to timestamp (ISO 8601)",
-      ),
-    },
+    inputSchema: { entry_type: z.string().optional().describe("Filter by type"), days: z.number().optional().describe("Last N days"), limit: z.number().optional().default(20), event_from: z.string().optional().describe( "Filter from timestamp (ISO 8601)", ), event_to: z.string().optional().describe( "Filter to timestamp (ISO 8601)", ),}
   },
   wrapHandler(async ({ entry_type, days, limit, event_from, event_to }) => {
     let q = supabase
@@ -1044,14 +964,7 @@ server.registerTool(
     title: "Search Health (Semantic)",
     description:
       "Search health entries by semantic meaning. Use when the user asks about health patterns like 'days I slept poorly', 'high heart rate episodes', 'when did I walk a lot'.",
-    inputSchema: {
-      query: z.string().describe("Natural language search query"),
-      limit: z.number().optional().default(10),
-      threshold: z.number().optional().default(0.3),
-      entry_type: z.string().optional().describe(
-        "Filter by entry type (e.g. sleep, steps, heart_rate)",
-      ),
-    },
+    inputSchema: { query: z.string().describe("Natural language search query"), limit: z.number().optional().default(10), threshold: z.number().optional().default(0.3), entry_type: z.string().optional().describe( "Filter by entry type (e.g. sleep, steps, heart_rate)", ),}
   },
   wrapHandler(async ({ query, limit, threshold, entry_type }) => {
     const qEmb = await getEmbedding(query);
@@ -1102,24 +1015,7 @@ server.registerTool(
     title: "Log Workout",
     description:
       "Record a training session. Use for manual logging or Iron-Log imports.",
-    inputSchema: {
-      workout_date: z.string().describe("Date YYYY-MM-DD"),
-      workout_type: z.string().describe(
-        "Type: strength, cardio, flexibility, other",
-      ),
-      name: z.string().describe("Workout name (e.g. 'Push Day', '5K Run')"),
-      exercises: z.array(z.record(z.any())).describe(
-        "Array of exercises: [{name, sets, reps, weight_kg, rpe, notes}]",
-      ),
-      duration_s: z.number().optional().describe("Duration in seconds"),
-      volume_kg: z.number().optional().describe("Total volume in kg"),
-      rpe: z.number().optional().describe("Overall RPE 1-10"),
-      notes: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-      external_id: z.string().optional().describe(
-        "External record ID from source system for upsert dedup",
-      ),
-    },
+    inputSchema: { workout_date: z.string().describe("Date YYYY-MM-DD"), workout_type: z.string().describe( "Type: strength, cardio, flexibility, other", ), name: z.string().describe("Workout name (e.g. 'Push Day', '5K Run')"), exercises: z.array(z.record(z.any())).describe( "Array of exercises: [{name, sets, reps, weight_kg, rpe, notes}]", ), duration_s: z.number().optional().describe("Duration in seconds"), volume_kg: z.number().optional().describe("Total volume in kg"), rpe: z.number().optional().describe("Overall RPE 1-10"), notes: z.string().optional(), tags: z.array(z.string()).optional(), external_id: z.string().optional().describe( "External record ID from source system for upsert dedup", ),}
   },
   wrapHandler(
     async (
@@ -1175,13 +1071,7 @@ server.registerTool(
     title: "Query Workouts",
     description:
       "Search training history. Use when the user asks about past workouts, progress, or training patterns.",
-    inputSchema: {
-      workout_type: z.string().optional().describe(
-        "Filter: strength, cardio, flexibility, other",
-      ),
-      days: z.number().optional().describe("Last N days"),
-      limit: z.number().optional().default(20),
-    },
+    inputSchema: { workout_type: z.string().optional().describe( "Filter: strength, cardio, flexibility, other", ), days: z.number().optional().describe("Last N days"), limit: z.number().optional().default(20),}
   },
   wrapHandler(async ({ workout_type, days, limit }) => {
     let q = supabase
@@ -1225,14 +1115,7 @@ server.registerTool(
     title: "Search Workouts (Semantic)",
     description:
       "Search training logs by semantic meaning. Use when the user asks about training patterns like 'heavy bench press days', 'cardio sessions last month', 'high volume workouts'.",
-    inputSchema: {
-      query: z.string().describe("Natural language search query"),
-      limit: z.number().optional().default(10),
-      threshold: z.number().optional().default(0.3),
-      workout_type: z.string().optional().describe(
-        "Filter: strength, cardio, flexibility, other",
-      ),
-    },
+    inputSchema: { query: z.string().describe("Natural language search query"), limit: z.number().optional().default(10), threshold: z.number().optional().default(0.3), workout_type: z.string().optional().describe( "Filter: strength, cardio, flexibility, other", ),}
   },
   wrapHandler(async ({ query, limit, threshold, workout_type }) => {
     const qEmb = await getEmbedding(query);
@@ -1287,17 +1170,7 @@ server.registerTool(
     title: "Health Summary",
     description:
       "View daily aggregated health summaries. Use when the user asks about their daily or weekly health overview, sleep stats, step counts, heart rate trends, or training volume.",
-    inputSchema: {
-      days: z.number().optional().default(7).describe(
-        "Number of recent days to show",
-      ),
-      from: z.string().optional().describe(
-        "Start date YYYY-MM-DD (overrides days)",
-      ),
-      to: z.string().optional().describe(
-        "End date YYYY-MM-DD (overrides days)",
-      ),
-    },
+    inputSchema: { days: z.number().optional().default(7).describe( "Number of recent days to show", ), from: z.string().optional().describe( "Start date YYYY-MM-DD (overrides days)", ), to: z.string().optional().describe( "End date YYYY-MM-DD (overrides days)", ),}
   },
   wrapHandler(async ({ days, from, to }) => {
     let q = supabase
@@ -1375,12 +1248,7 @@ server.registerTool(
     title: "Refresh Summary",
     description:
       "Compute or re-compute daily health summaries from raw health_entries and training_logs. Use after importing new data or to recalculate summaries.",
-    inputSchema: {
-      date: z.string().optional().describe("Single date YYYY-MM-DD to refresh"),
-      days: z.number().optional().default(1).describe(
-        "Number of recent days to refresh (used when date is omitted)",
-      ),
-    },
+    inputSchema: { date: z.string().optional().describe("Single date YYYY-MM-DD to refresh"), days: z.number().optional().default(1).describe( "Number of recent days to refresh (used when date is omitted)", ),}
   },
   wrapHandler(async ({ date, days }) => {
     const dates: string[] = [];
@@ -1424,13 +1292,7 @@ server.registerTool(
     title: "Search Entities",
     description:
       "Search the knowledge graph for entities by name. Use when the user asks about a person, project, concept, technology, organization, location, or event they've mentioned in their memories.",
-    inputSchema: {
-      query: z.string().describe("Entity name or partial name to search for"),
-      entity_type: z.string().optional().describe(
-        "Filter: person, project, concept, location, technology, organization, event, other",
-      ),
-      limit: z.number().optional().default(10),
-    },
+    inputSchema: { query: z.string().describe("Entity name or partial name to search for"), entity_type: z.string().optional().describe( "Filter: person, project, concept, location, technology, organization, event, other", ), limit: z.number().optional().default(10),}
   },
   wrapHandler(async ({ query, entity_type, limit }) => {
     let q = supabase
@@ -1472,10 +1334,7 @@ server.registerTool(
     title: "Get Entity",
     description:
       "Get full entity details including all memories that mention this entity. Use when the user wants to see everything related to a specific person, project, concept, etc.",
-    inputSchema: {
-      entity_id: z.string().uuid().describe("Entity UUID"),
-      limit: z.number().optional().default(10),
-    },
+    inputSchema: { entity_id: z.string().uuid().describe("Entity UUID"), limit: z.number().optional().default(10),}
   },
   wrapHandler(async ({ entity_id, limit }) => {
     const { data: entity, error: entityErr } = await supabase
@@ -1540,12 +1399,7 @@ server.registerTool(
     title: "List Entities",
     description:
       "List all entities in the knowledge graph, optionally filtered by type. Sorted by number of mentions (most connected first). Use to browse the knowledge graph.",
-    inputSchema: {
-      entity_type: z.string().optional().describe(
-        "Filter: person, project, concept, location, technology, organization, event, other",
-      ),
-      limit: z.number().optional().default(25),
-    },
+    inputSchema: { entity_type: z.string().optional().describe( "Filter: person, project, concept, location, technology, organization, event, other", ), limit: z.number().optional().default(25),}
   },
   wrapHandler(async ({ entity_type, limit }) => {
     let entityQ = supabase
@@ -1607,17 +1461,7 @@ server.registerTool(
     title: "Update Memory",
     description:
       "Update an existing memory. If content changes, the embedding is regenerated and the memory is reclassified.",
-    inputSchema: {
-      id: z.string().uuid().describe("Memory ID to update"),
-      content: z.string().optional().describe(
-        "New content (triggers re-embedding + reclassification)",
-      ),
-      title: z.string().optional(),
-      category: z.string().optional(),
-      importance: z.number().min(1).max(10).optional(),
-      tags: z.array(z.string()).optional(),
-      people: z.array(z.string()).optional(),
-    },
+    inputSchema: { id: z.string().uuid().describe("Memory ID to update"), content: z.string().optional().describe( "New content (triggers re-embedding + reclassification)", ), title: z.string().optional(), category: z.string().optional(), importance: z.number().min(1).max(10).optional(), tags: z.array(z.string()).optional(), people: z.array(z.string()).optional(),}
   },
   wrapHandler(
     async ({ id, content, title, category, importance, tags, people }) => {
@@ -1673,9 +1517,7 @@ server.registerTool(
   {
     title: "Delete Memory",
     description: "Permanently delete a memory by ID.",
-    inputSchema: {
-      id: z.string().uuid().describe("Memory ID to delete"),
-    },
+    inputSchema: { id: z.string().uuid().describe("Memory ID to delete"),}
   },
   wrapHandler(async ({ id }) => {
     const { data, error } = await supabase
@@ -1696,9 +1538,7 @@ server.registerTool(
   {
     title: "Delete Health Entry",
     description: "Permanently delete a health entry by ID.",
-    inputSchema: {
-      id: z.string().uuid().describe("Health entry ID to delete"),
-    },
+    inputSchema: { id: z.string().uuid().describe("Health entry ID to delete"),}
   },
   wrapHandler(async ({ id }) => {
     const { data, error } = await supabase
@@ -1721,19 +1561,7 @@ server.registerTool(
   {
     title: "Update Workout",
     description: "Update an existing training log entry.",
-    inputSchema: {
-      id: z.string().uuid().describe("Workout ID to update"),
-      name: z.string().optional(),
-      workout_type: z.string().optional(),
-      exercises: z.array(z.record(z.any())).optional().describe(
-        "Array of exercises: [{name, sets, reps, weight_kg, rpe, notes}]",
-      ),
-      duration_s: z.number().optional(),
-      volume_kg: z.number().optional(),
-      rpe: z.number().min(1).max(10).optional(),
-      notes: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-    },
+    inputSchema: { id: z.string().uuid().describe("Workout ID to update"), name: z.string().optional(), workout_type: z.string().optional(), exercises: z.array(z.record(z.any())).optional().describe( "Array of exercises: [{name, sets, reps, weight_kg, rpe, notes}]", ), duration_s: z.number().optional(), volume_kg: z.number().optional(), rpe: z.number().min(1).max(10).optional(), notes: z.string().optional(), tags: z.array(z.string()).optional(),}
   },
   wrapHandler(
     async (
@@ -1778,12 +1606,7 @@ server.registerTool(
   {
     title: "Sync Status",
     description: "View recent sync history from the sync_log table.",
-    inputSchema: {
-      source: z.string().optional().describe(
-        "Filter by source: iron-log, health-connect, health-api",
-      ),
-      limit: z.number().optional().default(10),
-    },
+    inputSchema: { source: z.string().optional().describe( "Filter by source: iron-log, health-connect, health-api", ), limit: z.number().optional().default(10),}
   },
   wrapHandler(async ({ source, limit }) => {
     const filters: Record<string, unknown> = {};

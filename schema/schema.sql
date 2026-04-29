@@ -286,7 +286,7 @@ CREATE OR REPLACE FUNCTION upsert_memory(
 )
 RETURNS JSONB AS $$
 DECLARE
-    v_fingerprint TEXT; v_existing JSONB; v_merged_meta JSONB; v_new_id UUID;
+    v_fingerprint TEXT; v_existing JSONB; v_merged_meta JSONB; v_new_id JSONB;
 BEGIN
     v_fingerprint := encode(sha256(p_content::bytea), 'hex');
     SELECT to_jsonb(m) INTO v_existing
