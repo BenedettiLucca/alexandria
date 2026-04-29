@@ -37,3 +37,10 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# OpenCode temporary task files
+.opencode-task-*.md
+
+# Supabase temp directories
+supabase/.temp/
+supabase/.branches/

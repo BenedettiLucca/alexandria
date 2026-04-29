@@ -137,7 +137,7 @@ Entities are automatically extracted when capturing memories (via LLM classifica
 
 ## Updating
 
-After any changes to `server/index.ts`:
+After any changes to `supabase/functions/alexandria/index.ts`:
 
 ```bash
 bash scripts/deploy.sh

@@ -8,8 +8,8 @@ import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 
 // --- Config ---
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_URL = Deno.env.get("LOCAL_SUPABASE_URL") ?? Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("LOCAL_SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
 const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY")!;
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
@@ -1872,7 +1872,8 @@ app.all("*", async (c) => {
 
   currentAuth = auth;
 
-  if (!c.req.header("accept")?.includes("text/event-stream")) {
+  const acceptHeader = c.req.header("accept") || "";
+  if (!acceptHeader.includes("application/json") || !acceptHeader.includes("text/event-stream")) {
     const headers = new Headers(c.req.raw.headers);
     headers.set("Accept", "application/json, text/event-stream");
     const patched = new Request(c.req.raw.url, {

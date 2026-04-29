@@ -126,7 +126,7 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 
 ```bash
 ./run-tests.sh                     # Full suite (121 tests)
-deno test server/ --allow-all      # Deno tests only (48)
+deno test supabase/functions/alexandria/ --allow-all      # Deno tests only (48)
 python -m pytest importers/ -v     # Python tests only (73)
 ```
 
@@ -135,12 +135,14 @@ python -m pytest importers/ -v     # Python tests only (73)
 ```
 alexandria/
 ├── schema/schema.sql          # Consolidated DB schema
-├── server/
-│   ├── index.ts               # MCP server (25 tools)
-│   ├── lib.ts                 # Pure functions
-│   ├── lib.test.ts            # Deno tests (48)
-│   ├── deno.json              # Deno config + imports
-│   └── deno.lock
+├── supabase/
+│   └── functions/
+│       └── alexandria/
+│           ├── index.ts       # MCP server (25 tools)
+│           ├── lib.ts         # Pure functions
+│           ├── lib.test.ts    # Deno tests (48)
+│           ├── deno.json      # Deno config + imports
+│           └── deno.lock
 ├── importers/
 │   ├── shared.py              # Shared utilities
 │   ├── health-connect/        # Google Health Connect importer

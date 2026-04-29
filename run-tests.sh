@@ -9,7 +9,7 @@ python3 -m pytest importers/ -v "$@"
 
 echo ""
 echo "=== Deno tests ==="
-deno test server/lib.test.ts --allow-read --allow-env
+deno test supabase/functions/alexandria/lib.test.ts --allow-read --allow-env
 
 echo ""
 echo "=== All tests passed ==="

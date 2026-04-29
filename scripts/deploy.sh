@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Alexandria -- Deploy to Supabase Edge Function
+# Alexandria — Deploy to Supabase Edge Function
 # ============================================================
 set -e
 
@@ -12,11 +12,7 @@ echo "==============================="
 echo ""
 
 # Check for Supabase CLI
-if ! command -v supabase &> /dev/null; then
-    echo "Installing Supabase CLI..."
-    curl -fsSL https://supabase.com/install.sh | bash
-fi
-
+# Using npx supabase (CLI installed locally)
 # Check for .env
 if [ ! -f "$PROJECT_ROOT/.env" ]; then
     echo "ERROR: .env file not found."
@@ -27,6 +23,11 @@ if [ ! -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 source "$PROJECT_ROOT/.env"
+
+# NOTE: For local development with `supabase functions serve`, the CLI blocks env vars
+# prefixed with SUPABASE_. Use LOCAL_SUPABASE_URL and LOCAL_SUPABASE_SERVICE_ROLE_KEY
+# in your local .env if needed. The deployed function uses SUPABASE_URL and
+# SUPABASE_SERVICE_ROLE_KEY as normal.
 
 # Validate required vars
 for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY OPENROUTER_API_KEY MCP_ACCESS_KEY; do
@@ -44,18 +45,18 @@ echo "Project ref: $PROJECT_REF"
 cd "$PROJECT_ROOT"
 if [ ! -d ".supabase" ]; then
     echo "Linking to Supabase project..."
-    supabase link --project-ref "$PROJECT_REF"
+    npx supabase link --project-ref "$PROJECT_REF"
 fi
 
 # Deploy the Edge Function
 echo "Deploying alexandria Edge Function..."
-supabase functions deploy alexandria \
+npx supabase functions deploy alexandria \
     --project-ref "$PROJECT_REF" \
-    --env-file "$PROJECT_ROOT/.env"
+    --use-api
 
 # Set secrets (persistent across deploys)
 echo "Setting secrets..."
-supabase secrets set \
+npx supabase secrets set \
     SUPABASE_URL="$SUPABASE_URL" \
     SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
     OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
@@ -69,13 +70,13 @@ echo "Deployed!"
 echo "========================================="
 echo ""
 echo "MCP Server URL:"
-echo "  ${FUNCTION_URL}?key=${MCP_ACCESS_KEY}"
-echo ""
-echo "Connection URL for clients (no key in URL, use header instead):"
 echo "  ${FUNCTION_URL}"
 echo ""
-echo "Header for auth:"
+echo "Auth header:"
 echo "  x-brain-key: ${MCP_ACCESS_KEY}"
+echo ""
+echo "Query param fallback:"
+echo "  ${FUNCTION_URL}?key=${MCP_ACCESS_KEY}"
 echo ""
 echo "Test it:"
 echo "  curl -H 'x-brain-key: ${MCP_ACCESS_KEY}' ${FUNCTION_URL}?key=${MCP_ACCESS_KEY}"
