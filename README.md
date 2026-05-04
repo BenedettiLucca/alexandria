@@ -1,5 +1,7 @@
 # Alexandria — Personal Context MCP Server
 
+[![Tests](https://github.com/BenedettiLucca/alexandria/actions/workflows/test.yml/badge.svg)](https://github.com/BenedettiLucca/alexandria/actions/workflows/test.yml)
+
 A unified personal context store accessible by any AI via the MCP protocol. Single-user, self-hosted on Supabase. One database, one server — every AI you use reads and writes to the same brain.
 
 Named after the Library of Alexandria — a single repository holding all knowledge, accessible to any scholar (or AI) who needs it.
@@ -125,10 +127,13 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 ## Testing
 
 ```bash
-./run-tests.sh                     # Full suite (121 tests)
-deno test supabase/functions/alexandria/ --allow-all      # Deno tests only (48)
-python -m pytest importers/ -v     # Python tests only (73)
+./run-tests.sh                                          # Full suite (121 tests)
+deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (48)
+python -m pytest importers/ -v                          # Python tests only (73)
+python -m pytest importers/ -v --cov=importers          # With coverage report
 ```
+
+CI runs automatically on every push to `master` and on pull requests. See the [Actions tab](https://github.com/BenedettiLucca/alexandria/actions) for results.
 
 ## Project Structure
 
