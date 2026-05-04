@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
 import { wrapHandler, queryTable } from "../helpers.ts";
-import { ProjectRow } from "../types.ts";
+import {  } from "../types.ts";
 
 export function registerProjectsTools(
   server: McpServer,

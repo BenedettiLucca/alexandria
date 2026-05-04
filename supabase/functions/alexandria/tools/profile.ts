@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getUserClient, AuthContext } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
-import { ProfileRow } from "../types.ts";
+import {  } from "../types.ts";
 
 export function registerProfileTools(
   server: McpServer,
@@ -33,7 +33,6 @@ export function registerProfileTools(
           "owner_id",
           null,
         );
-
       if (key) {
         const { data, error } = await qBase.eq("key", key).single();
         if (error) throw new Error(`Profile key "${key}" not found.`);
@@ -105,7 +104,6 @@ export function registerProfileTools(
     wrapHandler(async () => {
       const auth = getAuth();
       if (!auth) throw new Error("Not authenticated.");
-
       const lines = [
         `Auth method: ${
           auth.method === "jwt" ? "JWT Bearer token" : "Static API key"

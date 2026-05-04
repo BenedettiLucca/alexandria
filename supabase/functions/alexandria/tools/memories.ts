@@ -7,7 +7,7 @@ import {
   processEntities,
   wrapHandler,
 } from "../helpers.ts";
-import { MemoryRow } from "../types.ts";
+import {  } from "../types.ts";
 import {
   VALID_CATEGORIES,
   simpleClassify,
@@ -107,7 +107,6 @@ export function registerMemoriesTools(
         const autoPeople = (cl.people as string[]) || [];
         const allTags = [...new Set([...autoTags, ...(tags || [])])];
         const allPeople = [...new Set([...autoPeople, ...(people || [])])];
-
         const { data: upsertResult, error: upsertError } = await supabase.rpc(
           "upsert_memory",
           {

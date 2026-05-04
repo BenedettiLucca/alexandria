@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
-import { TrainingLogRow } from "../types.ts";
+import {  } from "../types.ts";
 import { workoutToText } from "../lib.ts";
 
 export function registerWorkoutsTools(
