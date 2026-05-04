@@ -1,0 +1,6 @@
+supabase>=2.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+
+# dev / testing
+pytest>=8.0.0
