@@ -57,7 +57,26 @@ Settings → MCP → Add new server:
 
 ## ChatGPT / OpenAI
 
-Not directly supported yet. Use the importers to pull data, or capture memories via Hermes/Claude and query them from ChatGPT through a custom GPT with API access.
+Alexandria now exposes MCP OAuth discovery endpoints and auth challenges compatible with ChatGPT custom MCP apps.
+
+### Recommended setup
+
+1. In ChatGPT, add a custom MCP app.
+2. MCP URL:
+   - `https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria`
+3. Auth mode:
+   - `OAuth`
+4. Keep `x-brain-key` for Hermes/automation clients (backward compatible).
+
+### OAuth behavior
+
+- Unauthorized MCP requests return `401` with:
+  - `WWW-Authenticate: Bearer ... resource_metadata=...`
+  - `_meta["mcp/www_authenticate"]` in body
+- Discovery endpoints available under the MCP path:
+  - `/.well-known/oauth-protected-resource`
+  - `/.well-known/oauth-authorization-server`
+  - `/.well-known/openid-configuration`
 
 ## Any MCP Client
 
