@@ -20,6 +20,7 @@ import { registerWorkoutsTools } from "./tools/workouts.ts";
 import { registerEntitiesTools } from "./tools/entities.ts";
 
 const OAUTH_SCOPE = "alexandria.access";
+const MCP_PUBLIC_URL = `${SUPABASE_URL}/functions/v1/alexandria`;
 
 const server = new McpServer({
   name: "alexandria",
@@ -36,31 +37,17 @@ registerHealthTools(server, getAuth);
 registerWorkoutsTools(server, getAuth);
 registerEntitiesTools(server, getAuth);
 
-function stripTrailingSlash(path: string): string {
-  const clean = path.replace(/\/+$/, "");
-  return clean || "/";
+function getProtectedResourceMetadataUrl(): string {
+  return `${MCP_PUBLIC_URL}?oauth_metadata=protected_resource`;
 }
 
-function getCanonicalMcpUrl(rawUrl: string): string {
-  const url = new URL(rawUrl);
-  let path = stripTrailingSlash(url.pathname);
-  path = path.replace(/\/\.well-known\/oauth-protected-resource(?:\/.*)?$/, "");
-  path = path.replace(/\/\.well-known\/oauth-authorization-server(?:\/.*)?$/, "");
-  path = stripTrailingSlash(path);
-  return `${url.origin}${path}`;
-}
-
-function getProtectedResourceMetadataUrl(rawUrl: string): string {
-  return `${getCanonicalMcpUrl(rawUrl)}/.well-known/oauth-protected-resource`;
-}
-
-function getOAuthChallenge(rawUrl: string, errorDescription = "Authorization required"): string {
-  const resourceMetadata = getProtectedResourceMetadataUrl(rawUrl);
+function getOAuthChallenge(errorDescription = "Authorization required"): string {
+  const resourceMetadata = getProtectedResourceMetadataUrl();
   return `Bearer realm="alexandria", resource_metadata="${resourceMetadata}", scope="${OAUTH_SCOPE}", error="invalid_token", error_description="${errorDescription}"`;
 }
 
 function unauthorized(c: Context, errorDescription = "Authorization required") {
-  const challenge = getOAuthChallenge(c.req.url, errorDescription);
+  const challenge = getOAuthChallenge(errorDescription);
   return c.json(
     {
       error: "Unauthorized",
@@ -74,15 +61,13 @@ function unauthorized(c: Context, errorDescription = "Authorization required") {
   );
 }
 
-function protectedResourceMetadata(c: Context) {
-  const mcpResource = getCanonicalMcpUrl(c.req.url);
-  const origin = new URL(c.req.url).origin;
+function protectedResourceMetadata() {
   return {
-    resource: mcpResource,
-    authorization_servers: [origin, SUPABASE_URL],
+    resource: MCP_PUBLIC_URL,
+    authorization_servers: [`${SUPABASE_URL}/auth/v1`],
     bearer_methods_supported: ["header"],
     scopes_supported: [OAUTH_SCOPE],
-    resource_documentation: `${mcpResource}`,
+    resource_documentation: MCP_PUBLIC_URL,
   };
 }
 
@@ -150,14 +135,14 @@ const app = new Hono();
 app.options("*", (c) => c.text("ok", 200, getCorsHeaders(c.req.header("origin"))));
 
 app.get("/.well-known/oauth-protected-resource", (c) => {
-  return c.json(protectedResourceMetadata(c), 200, {
+  return c.json(protectedResourceMetadata(), 200, {
     ...getCorsHeaders(c.req.header("origin")),
     "Cache-Control": "public, max-age=300",
   });
 });
 
 app.get("/.well-known/oauth-protected-resource/*", (c) => {
-  return c.json(protectedResourceMetadata(c), 200, {
+  return c.json(protectedResourceMetadata(), 200, {
     ...getCorsHeaders(c.req.header("origin")),
     "Cache-Control": "public, max-age=300",
   });
@@ -200,6 +185,28 @@ app.get("/.well-known/openid-configuration", async (c) => {
 });
 
 app.all("*", async (c) => {
+  const reqUrl = new URL(c.req.url);
+  const oauthMeta = reqUrl.searchParams.get("oauth_metadata");
+
+  if (c.req.method === "GET" && oauthMeta === "protected_resource") {
+    return c.json(protectedResourceMetadata(), 200, {
+      ...getCorsHeaders(c.req.header("origin")),
+      "Cache-Control": "public, max-age=300",
+    });
+  }
+
+  if (c.req.method === "GET" && (oauthMeta === "authorization_server" || oauthMeta === "openid_configuration")) {
+    try {
+      const metadata = await getAuthorizationServerMetadata();
+      return c.json(metadata, 200, {
+        ...getCorsHeaders(c.req.header("origin")),
+        "Cache-Control": "public, max-age=300",
+      });
+    } catch {
+      return c.json({ error: "OAuth metadata unavailable" }, 503, getCorsHeaders(c.req.header("origin")));
+    }
+  }
+
   const auth = await authenticate(c);
   if (!auth) {
     return unauthorized(c);

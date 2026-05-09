@@ -73,10 +73,11 @@ Alexandria now exposes MCP OAuth discovery endpoints and auth challenges compati
 - Unauthorized MCP requests return `401` with:
   - `WWW-Authenticate: Bearer ... resource_metadata=...`
   - `_meta["mcp/www_authenticate"]` in body
-- Discovery endpoints available under the MCP path:
-  - `/.well-known/oauth-protected-resource`
-  - `/.well-known/oauth-authorization-server`
-  - `/.well-known/openid-configuration`
+- The `resource_metadata` URL points to the MCP endpoint with query metadata mode:
+  - `?oauth_metadata=protected_resource`
+- Additional metadata modes available on the same MCP URL:
+  - `?oauth_metadata=authorization_server`
+  - `?oauth_metadata=openid_configuration`
 
 ## Any MCP Client
 
