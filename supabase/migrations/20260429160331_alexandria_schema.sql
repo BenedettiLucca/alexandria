@@ -465,7 +465,7 @@ CREATE OR REPLACE FUNCTION search_health_entries(
     filter_entry_type TEXT DEFAULT NULL
 )
 RETURNS TABLE (
-    id UUID, entry_type TEXT, "timestamp" TIMESTAMPTZ,
+    id UUID, entry_type TEXT, timestamp TIMESTAMPTZ,
     duration_s INTEGER, numeric_value NUMERIC, value JSONB, tags TEXT[],
     source TEXT, similarity FLOAT
 )

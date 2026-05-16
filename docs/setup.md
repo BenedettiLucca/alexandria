@@ -143,4 +143,10 @@ After any changes to `supabase/functions/alexandria/index.ts`:
 bash scripts/deploy.sh
 ```
 
-Schema changes need to be run manually in the SQL Editor.
+For database changes:
+1. Update `schema/schema.sql` first (canonical bootstrap schema).
+2. Mirror the exact same change into `supabase/migrations/*_alexandria_schema.sql`.
+3. Run `python3 scripts/check_schema_drift.py`.
+4. If an existing Supabase project needs the delta, create/apply an incremental migration as well.
+
+Schema changes for an already-running Supabase project still need to be applied to that remote database manually or via your migration workflow.

@@ -43,6 +43,8 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 
 ## Database Schema
 
+`schema/schema.sql` is the canonical schema for fresh installs, and it must stay identical to the consolidated bootstrap migration in `supabase/migrations/*_alexandria_schema.sql`.
+
 9 tables in a single consolidated [`schema/schema.sql`](schema/schema.sql):
 
 | Table | Description |
@@ -127,7 +129,8 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 ## Testing
 
 ```bash
-./run-tests.sh                                          # Full suite (121 tests)
+./run-tests.sh                                          # Schema drift check + full suite (121 tests)
+python3 scripts/check_schema_drift.py                   # Drift guard only
 deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (48)
 python -m pytest importers/ -v                          # Python tests only (73)
 python -m pytest importers/ -v --cov=importers          # With coverage report

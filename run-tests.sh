@@ -4,6 +4,9 @@
 # ============================================================
 set -e
 
+echo "=== Schema drift check ==="
+python3 scripts/check_schema_drift.py
+
 echo "=== Python tests (pytest) ==="
 python3 -m pytest importers/ -v "$@"
 
