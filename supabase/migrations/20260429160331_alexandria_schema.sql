@@ -376,7 +376,16 @@ BEGIN
     SELECT
         COUNT(*),
         COALESCE(SUM(CASE WHEN duration_s IS NOT NULL THEN duration_s ELSE 0 END), 0),
-        ARRAY_AGG(DISTINCT unnest(COALESCE(tags, '{}')))
+        COALESCE(
+            ARRAY(
+                SELECT DISTINCT tag
+                FROM health_entries h
+                CROSS JOIN LATERAL unnest(COALESCE(h.tags, '{}'::TEXT[])) AS tag
+                WHERE h.entry_type = 'exercise'
+                  AND h.timestamp::date = target_date
+            ),
+            '{}'::TEXT[]
+        )
     INTO v_ex_count, v_ex_minutes, v_ex_types
     FROM health_entries
     WHERE entry_type = 'exercise'
