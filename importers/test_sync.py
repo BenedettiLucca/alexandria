@@ -33,6 +33,7 @@ sys.modules["importers.health_connect.sync"] = _mod
 sys.modules["importers.health_connect"].sync = _mod
 _spec.loader.exec_module(_mod)
 get_credentials = _mod.get_credentials
+make_health_request = _mod.make_health_request
 make_aggregate_request = _mod.make_aggregate_request
 get_sleep_sessions = _mod.get_sleep_sessions
 sync_steps = _mod.sync_steps
@@ -356,3 +357,87 @@ class TestSyncLogWritten:
 
         insert_calls = supabase.table.return_value.insert.call_args_list
         assert len(insert_calls) >= 1
+
+
+class TestSyncExceptions:
+    @patch("urllib.request.urlopen")
+    @patch("importers.health_connect.sync.logger")
+    def test_make_health_request_handles_timeout(self, mock_logger, mock_urlopen):
+        mock_urlopen.side_effect = TimeoutError("timed out")
+
+        result = make_health_request(make_mock_creds(), "steps", 0, 0)
+
+        assert result is None
+        mock_logger.warning.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    @patch("importers.health_connect.sync.logger")
+    def test_make_health_request_handles_unexpected_exception(self, mock_logger, mock_urlopen):
+        mock_urlopen.side_effect = RuntimeError("boom")
+
+        result = make_health_request(make_mock_creds(), "steps", 0, 0)
+
+        assert result is None
+        mock_logger.warning.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    @patch("importers.health_connect.sync.logger")
+    def test_sync_exercise_handles_http_error(self, mock_logger, mock_urlopen):
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "url", 500, "Internal Server Error", {}, None
+        )
+        creds = make_mock_creds()
+        supabase = make_mock_supabase()
+
+        imported, skipped = sync_exercise(creds, supabase, 0, 0)
+        assert imported == 0
+        assert skipped == 0
+        mock_logger.warning.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    @patch("importers.health_connect.sync.logger")
+    def test_sync_exercise_handles_url_error(self, mock_logger, mock_urlopen):
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.URLError("Network down")
+        creds = make_mock_creds()
+        supabase = make_mock_supabase()
+
+        imported, skipped = sync_exercise(creds, supabase, 0, 0)
+        assert imported == 0
+        assert skipped == 0
+        mock_logger.warning.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    @patch("importers.health_connect.sync.logger")
+    def test_sync_exercise_handles_json_decode_error(self, mock_logger, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"not json"
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        creds = make_mock_creds()
+        supabase = make_mock_supabase()
+
+        imported, skipped = sync_exercise(creds, supabase, 0, 0)
+        assert imported == 0
+        assert skipped == 0
+        mock_logger.warning.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    @patch("importers.health_connect.sync.logger")
+    def test_sync_exercise_handles_unicode_decode_error(self, mock_logger, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"\xff"
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        creds = make_mock_creds()
+        supabase = make_mock_supabase()
+
+        imported, skipped = sync_exercise(creds, supabase, 0, 0)
+        assert imported == 0
+        assert skipped == 0
+        mock_logger.warning.assert_called_once()

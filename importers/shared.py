@@ -7,7 +7,10 @@ sync logging, timestamp formatting, and numeric value extraction.
 
 import os
 import sys
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 try:
     from supabase import create_client
@@ -87,6 +90,7 @@ def record_sync(
         supabase.table("sync_log").insert(row).execute()
     except Exception as e:
         print(f"  Warning: failed to record sync_log: {e}")
+        logger.warning("Failed to record sync_log", exc_info=True)
 
 
 def format_timestamp(epoch_ms):

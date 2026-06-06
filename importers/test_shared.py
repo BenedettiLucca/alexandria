@@ -139,12 +139,15 @@ class TestRecordSync:
         assert call_args["status"] == "failed"
         assert call_args["error_message"] == "something went wrong"
 
-    def test_catches_exception_gracefully(self):
+    def test_catches_exception_gracefully(self, caplog):
+        import logging
         mock_supabase = MagicMock()
         mock_supabase.table.return_value.insert.return_value.execute.side_effect = (
             Exception("db error")
         )
-        record_sync(mock_supabase, "iron-log")
+        with caplog.at_level(logging.WARNING):
+            record_sync(mock_supabase, "iron-log")
+        assert "Failed to record sync_log" in caplog.text
 
     def test_includes_started_at_when_provided(self):
         mock_supabase = MagicMock()

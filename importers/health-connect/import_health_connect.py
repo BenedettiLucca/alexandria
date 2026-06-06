@@ -16,8 +16,11 @@ import os
 import sqlite3
 import glob
 import zipfile
+import logging
 from datetime import datetime, timezone
 from hashlib import sha256
+
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
@@ -64,7 +67,7 @@ def list_tables(conn):
     return [r[0] for r in rows]
 
 
-def import_records(conn, supabase, config):
+def import_records(conn, supabase, config, stats=None):
     tables = [
         t
         for t in list_tables(conn)
@@ -80,8 +83,11 @@ def import_records(conn, supabase, config):
                 d[0].lower()
                 for d in conn.execute(f"SELECT * FROM [{table}] LIMIT 0").description
             ]
-        except Exception as e:
+        except sqlite3.DatabaseError as e:
             print(f"  Skipping {table}: {e}")
+            logger.warning(f"Error reading table {table}", exc_info=True)
+            if stats is not None:
+                stats["failed_tables"] = stats.get("failed_tables", 0) + 1
             continue
 
         for row in rows:
@@ -293,7 +299,7 @@ BLOOD_PRESSURE_CONFIG = {
 }
 
 
-def import_nutrition(conn, supabase):
+def import_nutrition(conn, supabase, stats=None):
     tables = [
         t
         for t in list_tables(conn)
@@ -309,8 +315,11 @@ def import_nutrition(conn, supabase):
                 d[0].lower()
                 for d in conn.execute(f"SELECT * FROM [{table}] LIMIT 0").description
             ]
-        except Exception as e:
+        except sqlite3.DatabaseError as e:
             print(f"  Skipping {table}: {e}")
+            logger.warning(f"Error reading nutrition table {table}", exc_info=True)
+            if stats is not None:
+                stats["failed_tables"] = stats.get("failed_tables", 0) + 1
             continue
 
         for row in rows:
@@ -413,8 +422,9 @@ def main():
             count = conn.execute(f"SELECT COUNT(*) FROM [{t}]").fetchone()[0]
             if count > 0:
                 print(f"  {t}: {count} rows")
-        except Exception:
+        except sqlite3.DatabaseError as e:
             print(f"  {t}: (error reading)")
+            logger.warning(f"Failed to read count for table {t}: {e}", exc_info=True)
 
     start_time = datetime.now(timezone.utc).isoformat()
     print("\n--- Importing ---")
@@ -429,14 +439,15 @@ def main():
         BLOOD_PRESSURE_CONFIG,
     ]
 
+    stats = {"failed_tables": 0}
     total_imported = 0
     total_skipped = 0
     for config in configs:
-        imp, skp = import_records(conn, supabase, config)
+        imp, skp = import_records(conn, supabase, config, stats=stats)
         total_imported += imp
         total_skipped += skp
 
-    n_imp, n_skip = import_nutrition(conn, supabase)
+    n_imp, n_skip = import_nutrition(conn, supabase, stats=stats)
     total_imported += n_imp
     total_skipped += n_skip
 
@@ -449,7 +460,11 @@ def main():
         processed=total_processed,
         imported=total_imported,
         skipped=total_skipped,
+        failed=stats["failed_tables"],
     )
+
+    if stats["failed_tables"]:
+        print(f"\nWarning: {stats['failed_tables']} tables could not be read during import.")
 
     conn.close()
     print("\nDone!")
