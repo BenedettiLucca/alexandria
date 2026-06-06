@@ -2,8 +2,11 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.12";
 import {
   briefToText,
+  computeBodyCompDelta,
   computeBriefContentHash,
+  extractBodyCompMetrics,
   extractNumericValue,
+  formatBodyCompSummary,
   normalizeBriefBody,
   normalizeStringArray,
   recordToText,
@@ -13,6 +16,90 @@ import {
   VALID_SOURCES,
   workoutToText,
 } from "./lib.ts";
+
+// --- extractBodyCompMetrics ---
+
+Deno.test("extractBodyCompMetrics extracts all fields when present", () => {
+  const value = {
+    weight_kg: 80,
+    body_fat_percent: 15.5,
+    skeletal_muscle_kg: 35.2,
+    body_water_kg: 45,
+    waist_cm: 85,
+    chest_cm: 100,
+    arm_cm: 32,
+    thigh_cm: 55,
+    calf_cm: 38,
+  };
+  const result = extractBodyCompMetrics(value);
+  assertEquals(result, value);
+});
+
+Deno.test("extractBodyCompMetrics returns null for missing fields", () => {
+  const value = {
+    weight_kg: 80,
+    body_fat_percent: 15.5,
+  };
+  const result = extractBodyCompMetrics(value);
+  assertEquals(result.weight_kg, 80);
+  assertEquals(result.body_fat_percent, 15.5);
+  assertEquals(result.skeletal_muscle_kg, null);
+  assertEquals(result.waist_cm, null);
+});
+
+// --- computeBodyCompDelta ---
+
+Deno.test("computeBodyCompDelta computes positive/negative/zero deltas correctly", () => {
+  const current = { weight_kg: 80.5, body_fat_percent: 15.0, waist_cm: 85 };
+  const previous = { weight_kg: 80.0, body_fat_percent: 15.5, waist_cm: 85 };
+  const result = computeBodyCompDelta(current, previous);
+
+  assertEquals(result.weight_kg, { delta: 0.5, direction: "up" });
+  assertEquals(result.body_fat_percent, { delta: -0.5, direction: "down" });
+  assertEquals(result.waist_cm, { delta: 0, direction: "flat" });
+});
+
+Deno.test("computeBodyCompDelta returns null when either value is missing", () => {
+  const current = { weight_kg: 80.5, body_fat_percent: 15.0 };
+  const previous = { weight_kg: 80.0, skeletal_muscle_kg: 35 };
+  const result = computeBodyCompDelta(current, previous);
+
+  assertEquals(result.weight_kg, { delta: 0.5, direction: "up" });
+  assertEquals(result.body_fat_percent, null);
+  assertEquals(result.skeletal_muscle_kg, null);
+});
+
+// --- formatBodyCompSummary ---
+
+Deno.test("formatBodyCompSummary includes latest metrics, delta arrows, goals, and quality flags", () => {
+  const entries = [{
+    timestamp: "2025-06-01T08:00:00Z",
+    metrics: { weight_kg: 80.5, body_fat_percent: 15.0 },
+    delta: {
+      weight_kg: { delta: 0.5, direction: "up" },
+      body_fat_percent: { delta: -0.2, direction: "down" },
+    },
+    context: "evening",
+    precision: "day",
+  }];
+  const goals = [{
+    metric_name: "weight_kg",
+    target_value: 78,
+    current_value: 80.5,
+    target_date: "2025-07-01",
+    status: "in_progress",
+  }];
+  const dateRange = { from: "2025-05-01", to: "2025-06-01" };
+
+  const result = formatBodyCompSummary(entries, goals, dateRange);
+
+  assertExists(result);
+  assertEquals(result.includes("Body Composition Check-in Summary"), true);
+  assertEquals(result.includes("Weight: 80.5kg (↑ 0.5kg)"), true);
+  assertEquals(result.includes("Body Fat: 15% (↓ 0.2%)"), true);
+  assertEquals(result.includes("⚠ Non-standard conditions: evening"), true);
+  assertEquals(result.includes("weight_kg: 80.5 → 78 by 2025-07-01 [in_progress]"), true);
+});
 
 // --- simpleClassify ---
 
