@@ -8,7 +8,7 @@ Named after the Library of Alexandria — a single repository holding all knowle
 
 ## Features
 
-- **25 MCP tools** for memories, projects, health, training, and knowledge graph
+- **28 MCP tools** for memories, briefs, projects, health, training, and knowledge graph
 - **Semantic search** with pgvector (HNSW indexes)
 - **Auto-classification and embedding** via OpenRouter (GPT-4o-mini + text-embedding-3-small)
 - **Knowledge graph** with entity extraction from memories
@@ -45,11 +45,12 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 
 `schema/schema.sql` is the canonical schema for fresh installs, and it must stay identical to the consolidated bootstrap migration in `supabase/migrations/*_alexandria_schema.sql`.
 
-9 tables in a single consolidated [`schema/schema.sql`](schema/schema.sql):
+10 tables in a single consolidated [`schema/schema.sql`](schema/schema.sql):
 
 | Table | Description |
 |-------|-------------|
 | `memories` | Notes, ideas, decisions, observations |
+| `briefs` | Structured markdown artifacts from cron/jobs with dedupe + semantic recall |
 | `projects` | Codebase context, architecture, conventions |
 | `profile` | User preferences, dev stack, environment |
 | `health_entries` | Health data (sleep, exercise, vitals, body composition) |
@@ -66,6 +67,11 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 - `capture_memory` — save a new memory (auto-embeds + classifies)
 - `list_memories` — list/filter recent memories
 - `memory_stats` — summary statistics
+
+### Briefs
+- `capture_brief` — store a structured brief/report artifact
+- `list_briefs` — list/filter recent briefs
+- `search_briefs` — semantic search across stored briefs
 
 ### Profile
 - `get_profile` — retrieve profile sections

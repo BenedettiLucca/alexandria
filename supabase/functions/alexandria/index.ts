@@ -13,6 +13,7 @@ import {
 } from "./config.ts";
 
 import { registerMemoriesTools } from "./tools/memories.ts";
+import { registerBriefsTools } from "./tools/briefs.ts";
 import { registerProfileTools } from "./tools/profile.ts";
 import { registerProjectsTools } from "./tools/projects.ts";
 import { registerHealthTools } from "./tools/health.ts";
@@ -31,6 +32,7 @@ let currentAuth: AuthContext | undefined;
 const getAuth = () => currentAuth;
 
 registerMemoriesTools(server, getAuth);
+registerBriefsTools(server, getAuth);
 registerProfileTools(server, getAuth);
 registerProjectsTools(server, getAuth);
 registerHealthTools(server, getAuth);

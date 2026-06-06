@@ -22,6 +22,48 @@ export const VALID_SOURCES = [
   "auto",
 ] as const;
 
+export function normalizeStringArray(
+  values: unknown,
+  opts: { lowercase?: boolean; maxItems?: number } = {},
+): string[] {
+  const { lowercase = false, maxItems = 25 } = opts;
+  if (!Array.isArray(values)) return [];
+
+  const normalized = values
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .map((value) => lowercase ? value.toLowerCase() : value);
+
+  return [...new Set(normalized)].slice(0, maxItems);
+}
+
+export function normalizeBriefBody(body: string): string {
+  return body.replace(/\r\n/g, "\n").trim();
+}
+
+export async function computeBriefContentHash(input: {
+  source_job: string;
+  title: string;
+  brief_date: string;
+  kind: string;
+  body_markdown: string;
+}): Promise<string> {
+  const canonical = JSON.stringify({
+    source_job: input.source_job.trim(),
+    title: input.title.trim(),
+    brief_date: input.brief_date.trim(),
+    kind: input.kind.trim().toLowerCase(),
+    body_markdown: normalizeBriefBody(input.body_markdown),
+  });
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function sanitizeClassification(
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -194,6 +236,26 @@ export function workoutToText(record: Record<string, unknown>): string {
   }
 
   return parts.join(": ") + (exercises?.length ? "" : "");
+}
+
+export function briefToText(record: Record<string, unknown>): string {
+  const title = (record.title as string) || "Untitled brief";
+  const briefDate = (record.brief_date as string) || "unknown date";
+  const kind = (record.kind as string) || "brief";
+  const sourceJob = (record.source_job as string) || "unknown-source";
+  const body = normalizeBriefBody((record.body_markdown as string) || "");
+  const topics = normalizeStringArray(record.topics, { lowercase: true });
+  const projectRefs = normalizeStringArray(record.project_refs);
+  const entityRefs = normalizeStringArray(record.entity_refs);
+
+  const parts = [
+    `Brief '${title}' (${kind}) from ${sourceJob} on ${briefDate}`,
+  ];
+  if (topics.length) parts.push(`topics: ${topics.join(", ")}`);
+  if (projectRefs.length) parts.push(`projects: ${projectRefs.join(", ")}`);
+  if (entityRefs.length) parts.push(`entities: ${entityRefs.join(", ")}`);
+  if (body) parts.push(body);
+  return parts.join("\n");
 }
 
 export function extractNumericValue(
