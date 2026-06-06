@@ -47,9 +47,13 @@ import os
 import sys
 import json
 import argparse
+import logging
+from urllib.error import HTTPError, URLError
 from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
@@ -179,8 +183,19 @@ def make_health_request(creds, data_type, start_ms, end_ms):
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read().decode())
+    except (
+        HTTPError,
+        URLError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TimeoutError,
+    ) as e:
+        print(f"  API request failed for {data_type}: {e}")
+        logger.warning(f"API request failed: {e}", exc_info=True)
+        return None
     except Exception as e:
         print(f"  API request failed for {data_type}: {e}")
+        logger.warning("Unexpected API request failure", exc_info=True)
         return None
 
 
@@ -205,8 +220,19 @@ def make_aggregate_request(creds, data_type_name, start_ms, end_ms):
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read().decode())
+    except (
+        HTTPError,
+        URLError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TimeoutError,
+    ) as e:
+        print(f"  Aggregate request failed for {data_type_name}: {e}")
+        logger.warning(f"Aggregate request failed for {data_type_name}", exc_info=True)
+        return None
     except Exception as e:
         print(f"  Aggregate request failed for {data_type_name}: {e}")
+        logger.warning("Unexpected aggregate request failure", exc_info=True)
         return None
 
 
@@ -225,8 +251,19 @@ def get_sleep_sessions(creds, start_ms, end_ms):
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read().decode())
+    except (
+        HTTPError,
+        URLError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TimeoutError,
+    ) as e:
+        print(f"  Sleep session request failed: {e}")
+        logger.warning("Sleep session request failed", exc_info=True)
+        return None
     except Exception as e:
         print(f"  Sleep session request failed: {e}")
+        logger.warning("Unexpected sleep session request failure", exc_info=True)
         return None
 
 
@@ -456,8 +493,19 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
     try:
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode())
+    except (
+        HTTPError,
+        URLError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TimeoutError,
+    ) as e:
+        print(f"  Exercise request failed: {e}")
+        logger.warning("Exercise request failed", exc_info=True)
+        return 0, 0
     except Exception as e:
         print(f"  Exercise request failed: {e}")
+        logger.warning("Unexpected exercise request failure", exc_info=True)
         return 0, 0
 
     imported = 0

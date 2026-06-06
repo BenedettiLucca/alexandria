@@ -3,7 +3,7 @@ import sys
 import sqlite3
 import tempfile
 import importlib.util
-from unittest.mock import MagicMock, MagicMock as MockModule
+from unittest.mock import patch, MagicMock, MagicMock as MockModule
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -36,6 +36,7 @@ sys.modules["importers.health_connect"].import_health_connect = _mod
 _spec.loader.exec_module(_mod)
 import_records = _mod.import_records
 import_nutrition = _mod.import_nutrition
+main = _mod.main
 STEPS_CONFIG = _mod.STEPS_CONFIG
 SLEEP_CONFIG = _mod.SLEEP_CONFIG
 EXERCISE_CONFIG = _mod.EXERCISE_CONFIG
@@ -405,3 +406,47 @@ class TestMissingFields:
         assert record["numeric_value"] == 0.0
         conn.close()
         os.unlink(path)
+
+
+class TestFailureTracking:
+    def test_import_records_tracks_failed_tables(self):
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = sqlite3.DatabaseError("Corrupt")
+        mock_supabase = MagicMock()
+        stats = {"failed_tables": 0}
+
+        # Mock list_tables to return one table that matches config
+        with patch(
+            "importers.health_connect.import_health_connect.list_tables",
+            return_value=["StepsRecord"],
+        ):
+            imported, skipped = import_records(
+                mock_conn, mock_supabase, STEPS_CONFIG, stats=stats
+            )
+
+        assert stats["failed_tables"] == 1
+        assert imported == 0
+
+    def test_main_records_failed_table_count(self):
+        mock_conn = MagicMock()
+        mock_supabase = MagicMock()
+
+        def import_records_side_effect(conn, supabase, config, stats=None):
+            stats["failed_tables"] = 2
+            return 0, 0
+
+        with (
+            patch.object(sys, "argv", ["import_health_connect.py", "/tmp/export"]),
+            patch("importers.health_connect.import_health_connect.os.path.exists", return_value=True),
+            patch("importers.health_connect.import_health_connect.find_db", return_value="/tmp/mock.db"),
+            patch("importers.health_connect.import_health_connect.sqlite3.connect", return_value=mock_conn),
+            patch("importers.health_connect.import_health_connect.list_tables", return_value=[]),
+            patch("importers.health_connect.import_health_connect.connect_supabase", return_value=mock_supabase),
+            patch("importers.health_connect.import_health_connect.import_records", side_effect=import_records_side_effect),
+            patch("importers.health_connect.import_health_connect.import_nutrition", return_value=(0, 0)),
+            patch("importers.health_connect.import_health_connect.record_sync") as mock_record_sync,
+        ):
+            main()
+
+        assert mock_record_sync.call_args is not None
+        assert mock_record_sync.call_args.kwargs["failed"] == 2
