@@ -1,7 +1,11 @@
 // deno-lint-ignore no-import-prefix
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.12";
 import {
+  briefToText,
+  computeBriefContentHash,
   extractNumericValue,
+  normalizeBriefBody,
+  normalizeStringArray,
   recordToText,
   sanitizeClassification,
   simpleClassify,
@@ -404,4 +408,80 @@ Deno.test("recordToText uses timestamp fallback correctly", () => {
   assertExists(result);
   assertEquals(result.includes("10,000"), true);
   assertEquals(result.includes("steps"), true);
+});
+
+// --- brief helpers ---
+
+Deno.test("normalizeStringArray trims, dedupes, and lowercases when requested", () => {
+  assertEquals(
+    normalizeStringArray([" ETF Flows ", "etf flows", "Hyperliquid", ""], {
+      lowercase: true,
+    }),
+    ["etf flows", "hyperliquid"],
+  );
+});
+
+Deno.test("normalizeBriefBody normalizes line endings and trims edges", () => {
+  assertEquals(
+    normalizeBriefBody("\nLine 1\r\nLine 2\r\n\n"),
+    "Line 1\nLine 2",
+  );
+});
+
+Deno.test("computeBriefContentHash is stable across line-ending differences", async () => {
+  const a = await computeBriefContentHash({
+    source_job: "research-pack",
+    title: "Morning Brief",
+    brief_date: "2026-06-06",
+    kind: "night_research",
+    body_markdown: "## Summary\nLine 1\nLine 2\n",
+  });
+  const b = await computeBriefContentHash({
+    source_job: "research-pack",
+    title: "Morning Brief",
+    brief_date: "2026-06-06",
+    kind: "night_research",
+    body_markdown: "\r\n## Summary\r\nLine 1\r\nLine 2\r\n",
+  });
+
+  assertEquals(a, b);
+});
+
+Deno.test("computeBriefContentHash changes when brief identity changes", async () => {
+  const a = await computeBriefContentHash({
+    source_job: "research-pack",
+    title: "Morning Brief",
+    brief_date: "2026-06-06",
+    kind: "night_research",
+    body_markdown: "same body",
+  });
+  const b = await computeBriefContentHash({
+    source_job: "research-pack",
+    title: "Morning Brief",
+    brief_date: "2026-06-07",
+    kind: "night_research",
+    body_markdown: "same body",
+  });
+
+  assertEquals(a === b, false);
+});
+
+Deno.test("briefToText includes metadata and markdown body for semantic indexing", () => {
+  const result = briefToText({
+    title: "ETF + Hyperliquid",
+    brief_date: "2026-06-06",
+    kind: "content_coach",
+    source_job: "content-coach",
+    topics: ["ETF flows", "Hyperliquid"],
+    project_refs: ["wyde"],
+    entity_refs: ["Intmax"],
+    body_markdown: "## Talking Points\n- ETF flows still dominate",
+  });
+
+  assertEquals(result.includes("ETF + Hyperliquid"), true);
+  assertEquals(result.includes("content-coach"), true);
+  assertEquals(result.includes("topics: etf flows, hyperliquid"), true);
+  assertEquals(result.includes("projects: wyde"), true);
+  assertEquals(result.includes("entities: Intmax"), true);
+  assertEquals(result.includes("## Talking Points"), true);
 });
