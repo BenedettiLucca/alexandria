@@ -15,4 +15,8 @@ echo "=== Deno tests ==="
 deno test supabase/functions/alexandria/lib.test.ts --allow-read --allow-env
 
 echo ""
+echo "=== Deno tool tests ==="
+deno test supabase/functions/alexandria/tools/memories.test.ts supabase/functions/alexandria/tools/health.test.ts --allow-read --allow-env
+
+echo ""
 echo "=== All tests passed ==="
