@@ -3,7 +3,12 @@ import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
 import {   } from "../types.ts";
-import { recordToText } from "../lib.ts";
+import {
+  computeBodyCompDelta,
+  extractBodyCompMetrics,
+  formatBodyCompSummary,
+  recordToText,
+} from "../lib.ts";
 
 export function registerHealthTools(
   server: McpServer,
@@ -343,6 +348,99 @@ export function registerHealthTools(
       return `Deleted health entry: ${data.entry_type} at ${
         new Date(data.timestamp).toLocaleString()
       }`;
+    }),
+  );
+
+  server.registerTool(
+    "bodycomp_summary",
+    {
+      title: "Body Composition Summary",
+      description:
+        "View body composition trends, deltas, and goal progress. Includes weight, body fat, muscle mass, and body measurements.",
+      inputSchema: {
+        days: z.number().optional().default(30).describe(
+          "How many days back to look",
+        ),
+        from: z.string().optional().describe("ISO date YYYY-MM-DD"),
+        to: z.string().optional().describe("ISO date YYYY-MM-DD"),
+      },
+    },
+    wrapHandler(async ({ days, from, to }) => {
+      const toDate = to ? new Date(to) : new Date();
+      if (to && !to.includes("T")) toDate.setHours(23, 59, 59, 999);
+
+      const fromDate = from ? new Date(from) : new Date(toDate);
+      if (!from) {
+        fromDate.setDate(fromDate.getDate() - (days || 30));
+      }
+      if (from && !from.includes("T")) fromDate.setHours(0, 0, 0, 0);
+
+      const fromISO = fromDate.toISOString();
+      const toISO = toDate.toISOString();
+
+      const { data: entriesData, error: entriesError } = await supabase
+        .from("health_entries")
+        .select("timestamp, value, metadata")
+        .eq("entry_type", "body_composition")
+        .gte("timestamp", fromISO)
+        .lte("timestamp", toISO)
+        .order("timestamp", { ascending: false });
+
+      if (entriesError) throw new Error(entriesError.message);
+
+      const { data: goalsData, error: goalsError } = await supabase
+        .from("health_entries")
+        .select("value")
+        .eq("entry_type", "measurement_goal")
+        .gte("timestamp", fromISO)
+        .lte("timestamp", toISO);
+
+      if (goalsError) throw new Error(goalsError.message);
+
+      if (!entriesData || entriesData.length === 0) {
+        return "No body composition entries found in the selected period.";
+      }
+
+      const processedEntries = entriesData.map((e, i) => {
+        const metrics = extractBodyCompMetrics(
+          e.value as Record<string, unknown>,
+        );
+        const prev = entriesData[i + 1];
+        let delta;
+        if (prev) {
+          const prevMetrics = extractBodyCompMetrics(
+            prev.value as Record<string, unknown>,
+          );
+          delta = computeBodyCompDelta(metrics, prevMetrics);
+        }
+        return {
+          timestamp: e.timestamp,
+          metrics,
+          delta,
+          context: (e.metadata as any)?.measurement_context,
+          precision: (e.metadata as any)?.date_precision,
+        };
+      });
+
+      const processedGoals = (goalsData || []).map((g) => {
+        const v = g.value as any;
+        return {
+          metric_name: v.metric_name,
+          target_value: v.target_value,
+          current_value: v.current_value,
+          target_date: v.target_date,
+          status: v.status,
+        };
+      });
+
+      return formatBodyCompSummary(
+        processedEntries,
+        processedGoals,
+        {
+          from: fromISO.split("T")[0],
+          to: toISO.split("T")[0],
+        },
+      );
     }),
   );
 }

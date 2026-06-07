@@ -287,3 +287,139 @@ export function extractNumericValue(
       return null;
   }
 }
+
+export function extractBodyCompMetrics(
+  value: Record<string, unknown>,
+): Record<string, number | null> {
+  const keys = [
+    "weight_kg",
+    "body_fat_percent",
+    "skeletal_muscle_kg",
+    "body_water_kg",
+    "waist_cm",
+    "chest_cm",
+    "arm_cm",
+    "thigh_cm",
+    "calf_cm",
+  ];
+  const metrics: Record<string, number | null> = {};
+  for (const key of keys) {
+    const val = value[key];
+    metrics[key] = typeof val === "number" ? val : null;
+  }
+  return metrics;
+}
+
+export function computeBodyCompDelta(
+  current: Record<string, number | null>,
+  previous: Record<string, number | null>,
+): Record<string, { delta: number; direction: "up" | "down" | "flat" } | null> {
+  const keys = new Set([...Object.keys(current), ...Object.keys(previous)]);
+  const deltas: Record<
+    string,
+    { delta: number; direction: "up" | "down" | "flat" } | null
+  > = {};
+  for (const key of keys) {
+    const currVal = current[key];
+    const prevVal = previous[key];
+
+    if (currVal != null && prevVal != null) {
+      const delta = currVal - prevVal;
+      const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+      deltas[key] = { delta: parseFloat(delta.toFixed(2)), direction };
+    } else {
+      deltas[key] = null;
+    }
+  }
+  return deltas;
+}
+
+export function formatBodyCompSummary(
+  entries: Array<{
+    timestamp: string;
+    metrics: Record<string, number | null>;
+    delta?: Record<string, any>;
+    context?: string;
+    precision?: string;
+  }>,
+  goals: Array<{
+    metric_name: string;
+    target_value: number;
+    current_value: number | null;
+    target_date: string | null;
+    status: string | null;
+  }>,
+  dateRange: { from: string; to: string },
+): string {
+  if (entries.length === 0) {
+    return "No body composition entries found in the selected period.";
+  }
+
+  const latest = entries[0];
+  const parts = [
+    "Body Composition Check-in Summary",
+    `Period: ${dateRange.from} to ${dateRange.to}`,
+    "",
+    `Latest Snapshot: ${new Date(latest.timestamp).toLocaleDateString()}`,
+  ];
+
+  if (
+    (latest.context && latest.context !== "morning_fast") ||
+    (latest.precision && latest.precision !== "day")
+  ) {
+    parts.push(
+      `⚠ Non-standard conditions: ${latest.context || "unknown context"}, ${
+        latest.precision || "unknown precision"
+      }`,
+    );
+  }
+
+  const metricLabels: Record<string, string> = {
+    weight_kg: "Weight",
+    body_fat_percent: "Body Fat",
+    skeletal_muscle_kg: "Muscle Mass",
+    body_water_kg: "Water",
+    waist_cm: "Waist",
+    chest_cm: "Chest",
+    arm_cm: "Arm",
+    thigh_cm: "Thigh",
+    calf_cm: "Calf",
+  };
+
+  const metricUnits: Record<string, string> = {
+    weight_kg: "kg",
+    body_fat_percent: "%",
+    skeletal_muscle_kg: "kg",
+    body_water_kg: "kg",
+    waist_cm: "cm",
+    chest_cm: "cm",
+    arm_cm: "cm",
+    thigh_cm: "cm",
+    calf_cm: "cm",
+  };
+
+  for (const [key, val] of Object.entries(latest.metrics)) {
+    if (val != null) {
+      let line = `- ${metricLabels[key] || key}: ${val}${metricUnits[key] || ""}`;
+      const d = latest.delta?.[key];
+      if (d) {
+        const arrow = d.direction === "up" ? "↑" : d.direction === "down" ? "↓" : "→";
+        line += ` (${arrow} ${Math.abs(d.delta)}${metricUnits[key] || ""})`;
+      }
+      parts.push(line);
+    }
+  }
+
+  if (goals.length > 0) {
+    parts.push("", "Goal Progress:");
+    for (const g of goals) {
+      const current = g.current_value != null ? `${g.current_value}` : "N/A";
+      const target = g.target_value;
+      const status = g.status ? ` [${g.status}]` : "";
+      const date = g.target_date ? ` by ${g.target_date}` : "";
+      parts.push(`- ${g.metric_name}: ${current} → ${target}${date}${status}`);
+    }
+  }
+
+  return parts.join("\n");
+}
