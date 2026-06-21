@@ -38,8 +38,10 @@ build/
 .coverage
 htmlcov/
 
-# OpenCode temporary task files
+# AI agent task files
 .opencode-task-*.md
+.gemini-task.md
+.claude/
 
 # Supabase temp directories
 supabase/.temp/
