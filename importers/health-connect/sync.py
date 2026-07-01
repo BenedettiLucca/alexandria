@@ -48,7 +48,7 @@ import sys
 import json
 import argparse
 import logging
-from urllib.error import HTTPError, URLError
+import subprocess
 from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -119,118 +119,38 @@ def get_credentials():
     return creds
 
 
-def make_health_request(creds, data_type, start_ms, end_ms):
-    """Make a request to the Google Health API."""
-    import urllib.request
-    import urllib.parse
-
-    # The Google Health API uses the v1 users dataTypes endpoint
-    base_url = "https://health.googleapis.com/v4/users/me/dataTypes"
-
-    params = urllib.parse.urlencode(
-        {
-            "dataTypeName": data_type,
-            "startTime": format_timestamp(start_ms),
-            "endTime": format_timestamp(end_ms),
-        }
-    )
-
-    url = f"{base_url}/{data_type}/dataPoints?{params}"
-
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", f"Bearer {creds.token}")
-
+def _api_get(creds, url, method="GET", body=None):
+    """Single HTTP helper. Uses curl (urllib hangs on CachyOS)."""
+    headers = ["-H", f"Authorization: Bearer {creds.token}"]
+    if body:
+        headers += ["-H", "Content-Type: application/json", "-d", body]
     try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode())
-    except (
-        HTTPError,
-        URLError,
-        json.JSONDecodeError,
-        UnicodeDecodeError,
-        TimeoutError,
-    ) as e:
-        print(f"  API request failed for {data_type}: {e}")
+        r = subprocess.run(
+            ["curl", "-s", "-X", method] + headers + [url],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            print(f"  curl failed: {r.stderr.strip()}")
+            return None
+        return json.loads(r.stdout)
+    except Exception as e:
+        print(f"  API request failed: {e}")
         logger.warning(f"API request failed: {e}", exc_info=True)
-        return None
-    except Exception as e:
-        print(f"  API request failed for {data_type}: {e}")
-        logger.warning("Unexpected API request failure", exc_info=True)
-        return None
-
-
-def make_aggregate_request(creds, data_type_name, start_ms, end_ms):
-    """Aggregate data using the Fitness API (more reliable for some types)."""
-    import urllib.request
-
-    url = "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate"
-    body = json.dumps(
-        {
-            "aggregateBy": [{"dataTypeName": data_type_name}],
-            "bucketByTime": {"durationMillis": 86400000},  # daily buckets
-            "startTimeMillis": str(start_ms),
-            "endTimeMillis": str(end_ms),
-        }
-    ).encode()
-
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Authorization", f"Bearer {creds.token}")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode())
-    except (
-        HTTPError,
-        URLError,
-        json.JSONDecodeError,
-        UnicodeDecodeError,
-        TimeoutError,
-    ) as e:
-        print(f"  Aggregate request failed for {data_type_name}: {e}")
-        logger.warning(f"Aggregate request failed for {data_type_name}", exc_info=True)
-        return None
-    except Exception as e:
-        print(f"  Aggregate request failed for {data_type_name}: {e}")
-        logger.warning("Unexpected aggregate request failure", exc_info=True)
-        return None
-
-
-def get_sleep_sessions(creds, start_ms, end_ms):
-    """Get sleep sessions from the Fitness API."""
-    import urllib.request
-
-    start_iso = format_timestamp(start_ms)
-    end_iso = format_timestamp(end_ms)
-
-    url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}&activityType=72"
-
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", f"Bearer {creds.token}")
-
-    try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode())
-    except (
-        HTTPError,
-        URLError,
-        json.JSONDecodeError,
-        UnicodeDecodeError,
-        TimeoutError,
-    ) as e:
-        print(f"  Sleep session request failed: {e}")
-        logger.warning("Sleep session request failed", exc_info=True)
-        return None
-    except Exception as e:
-        print(f"  Sleep session request failed: {e}")
-        logger.warning("Unexpected sleep session request failure", exc_info=True)
         return None
 
 
 def sync_steps(creds, supabase, start_ms, end_ms):
     """Sync daily step counts."""
-    data = make_aggregate_request(
-        creds, "com.google.step_count.delta", start_ms, end_ms
+    data = _api_get(
+        creds,
+        "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
+        method="POST",
+        body=json.dumps({
+            "aggregateBy": [{"dataTypeName": "com.google.step_count.delta"}],
+            "bucketByTime": {"durationMillis": 86400000},
+            "startTimeMillis": str(start_ms),
+            "endTimeMillis": str(end_ms),
+        }),
     )
     if not data:
         return 0, 0
@@ -283,7 +203,17 @@ def sync_steps(creds, supabase, start_ms, end_ms):
 
 def sync_weight(creds, supabase, start_ms, end_ms):
     """Sync weight measurements."""
-    data = make_aggregate_request(creds, "com.google.weight", start_ms, end_ms)
+    data = _api_get(
+        creds,
+        "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
+        method="POST",
+        body=json.dumps({
+            "aggregateBy": [{"dataTypeName": "com.google.weight"}],
+            "bucketByTime": {"durationMillis": 86400000},
+            "startTimeMillis": str(start_ms),
+            "endTimeMillis": str(end_ms),
+        }),
+    )
     if not data:
         return 0, 0
 
@@ -335,7 +265,17 @@ def sync_weight(creds, supabase, start_ms, end_ms):
 
 def sync_heart_rate(creds, supabase, start_ms, end_ms):
     """Sync heart rate samples."""
-    data = make_aggregate_request(creds, "com.google.heart_rate.bpm", start_ms, end_ms)
+    data = _api_get(
+        creds,
+        "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
+        method="POST",
+        body=json.dumps({
+            "aggregateBy": [{"dataTypeName": "com.google.heart_rate.bpm"}],
+            "bucketByTime": {"durationMillis": 86400000},
+            "startTimeMillis": str(start_ms),
+            "endTimeMillis": str(end_ms),
+        }),
+    )
     if not data:
         return 0, 0
 
@@ -387,7 +327,10 @@ def sync_heart_rate(creds, supabase, start_ms, end_ms):
 
 def sync_sleep(creds, supabase, start_ms, end_ms):
     """Sync sleep sessions."""
-    data = get_sleep_sessions(creds, start_ms, end_ms)
+    start_iso = format_timestamp(start_ms)
+    end_iso = format_timestamp(end_ms)
+    url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}&activityType=72"
+    data = _api_get(creds, url)
     if not data:
         return 0, 0
 
@@ -439,33 +382,11 @@ def sync_sleep(creds, supabase, start_ms, end_ms):
 
 def sync_exercise(creds, supabase, start_ms, end_ms):
     """Sync exercise sessions."""
-    import urllib.request
-
     start_iso = format_timestamp(start_ms)
     end_iso = format_timestamp(end_ms)
-
-    # Get all non-sleep sessions
     url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}"
-
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", f"Bearer {creds.token}")
-
-    try:
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode())
-    except (
-        HTTPError,
-        URLError,
-        json.JSONDecodeError,
-        UnicodeDecodeError,
-        TimeoutError,
-    ) as e:
-        print(f"  Exercise request failed: {e}")
-        logger.warning("Exercise request failed", exc_info=True)
-        return 0, 0
-    except Exception as e:
-        print(f"  Exercise request failed: {e}")
-        logger.warning("Unexpected exercise request failure", exc_info=True)
+    data = _api_get(creds, url)
+    if not data:
         return 0, 0
 
     imported = 0
@@ -546,7 +467,7 @@ def main():
     )
 
     start_date = format_date(start_ms)
-    end_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    end_date = format_date(end_ms)
     print(f"\nSyncing {start_date} to {end_date} ({days} days)...")
 
     total_imported = 0

@@ -1,7 +1,7 @@
 import os
 import sys
 import importlib.util
-from unittest.mock import patch, MagicMock, MagicMock as MockModule
+from unittest.mock import patch, MagicMock
 
 
 
@@ -28,9 +28,7 @@ sys.modules["importers.health_connect.sync"] = _mod
 sys.modules["importers.health_connect"].sync = _mod
 _spec.loader.exec_module(_mod)
 get_credentials = _mod.get_credentials
-make_health_request = _mod.make_health_request
-make_aggregate_request = _mod.make_aggregate_request
-get_sleep_sessions = _mod.get_sleep_sessions
+_api_get = _mod._api_get
 sync_steps = _mod.sync_steps
 sync_weight = _mod.sync_weight
 sync_heart_rate = _mod.sync_heart_rate
@@ -129,9 +127,9 @@ EXERCISE_SESSIONS_RESPONSE = {
 
 
 class TestSyncSteps:
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_imports_steps_correctly(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_STEPS
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_imports_steps_correctly(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_STEPS
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -145,9 +143,9 @@ class TestSyncSteps:
         assert record["value"] == {"count": 8500}
         assert record["tags"] == ["health-connect", "steps"]
 
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_skips_existing(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_STEPS
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_skips_existing(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_STEPS
         creds = make_mock_creds()
         supabase = make_mock_supabase()
         supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
@@ -159,9 +157,9 @@ class TestSyncSteps:
         assert imported == 0
         assert skipped == 1
 
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_no_data_returns_zero(self, mock_agg):
-        mock_agg.return_value = None
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_no_data_returns_zero(self, mock_api):
+        mock_api.return_value = None
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -172,9 +170,9 @@ class TestSyncSteps:
 
 
 class TestSyncWeight:
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_imports_weight_correctly(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_WEIGHT
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_imports_weight_correctly(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_WEIGHT
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -187,9 +185,9 @@ class TestSyncWeight:
         assert record["numeric_value"] == 80.5
         assert record["value"] == {"weight_kg": 80.5}
 
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_skips_existing(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_WEIGHT
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_skips_existing(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_WEIGHT
         creds = make_mock_creds()
         supabase = make_mock_supabase()
         supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
@@ -203,9 +201,9 @@ class TestSyncWeight:
 
 
 class TestSyncHeartRate:
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_imports_heart_rate_correctly(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_HR
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_imports_heart_rate_correctly(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_HR
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -220,9 +218,9 @@ class TestSyncHeartRate:
         assert record["numeric_value"] == 72
         assert record["value"] == {"bpm": 72}
 
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_skips_existing(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_HR
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_skips_existing(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_HR
         creds = make_mock_creds()
         supabase = make_mock_supabase()
         supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
@@ -238,7 +236,7 @@ class TestSyncHeartRate:
 
 
 class TestSyncSleep:
-    @patch("importers.health_connect.sync.get_sleep_sessions")
+    @patch(f"{SYNC_MOD}._api_get")
     def test_imports_sleep_correctly(self, mock_sleep):
         mock_sleep.return_value = SLEEP_SESSIONS_RESPONSE
         creds = make_mock_creds()
@@ -256,7 +254,7 @@ class TestSyncSleep:
         assert record["value"]["name"] == "Night Sleep"
         assert record["tags"] == ["health-connect", "sleep"]
 
-    @patch("importers.health_connect.sync.get_sleep_sessions")
+    @patch(f"{SYNC_MOD}._api_get")
     def test_skips_existing(self, mock_sleep):
         mock_sleep.return_value = SLEEP_SESSIONS_RESPONSE
         creds = make_mock_creds()
@@ -270,7 +268,7 @@ class TestSyncSleep:
         assert imported == 0
         assert skipped == 1
 
-    @patch("importers.health_connect.sync.get_sleep_sessions")
+    @patch(f"{SYNC_MOD}._api_get")
     def test_no_data_returns_zero(self, mock_sleep):
         mock_sleep.return_value = None
         creds = make_mock_creds()
@@ -283,14 +281,9 @@ class TestSyncSleep:
 
 
 class TestSyncExercise:
-    @patch("urllib.request.urlopen")
-    def test_imports_exercise_correctly(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'{"session": [{"startTimeMillis": "1700000000000", "endTimeMillis": "1700003600000", "name": "Running", "activityType": 8}]}'
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_imports_exercise_correctly(self, mock_api):
+        mock_api.return_value = EXERCISE_SESSIONS_RESPONSE
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -306,14 +299,9 @@ class TestSyncExercise:
         assert record["value"]["activity_type"] == 8
         assert record["tags"] == ["health-connect", "exercise"]
 
-    @patch("urllib.request.urlopen")
-    def test_skips_sleep_sessions(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'{"session": [{"startTimeMillis": "1700000000000", "endTimeMillis": "1700036000000", "name": "Sleep", "activityType": 72}]}'
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_skips_sleep_sessions(self, mock_api):
+        mock_api.return_value = {"session": [{"startTimeMillis": "1700000000000", "endTimeMillis": "1700036000000", "name": "Sleep", "activityType": 72}]}
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -321,14 +309,9 @@ class TestSyncExercise:
 
         assert imported == 0
 
-    @patch("urllib.request.urlopen")
-    def test_skips_existing(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'{"session": [{"startTimeMillis": "1700000000000", "endTimeMillis": "1700003600000", "name": "Running", "activityType": 8}]}'
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_skips_existing(self, mock_api):
+        mock_api.return_value = EXERCISE_SESSIONS_RESPONSE
         creds = make_mock_creds()
         supabase = make_mock_supabase()
         supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
@@ -342,9 +325,9 @@ class TestSyncExercise:
 
 
 class TestSyncLogWritten:
-    @patch("importers.health_connect.sync.make_aggregate_request")
-    def test_sync_log_written_after_sync(self, mock_agg):
-        mock_agg.return_value = AGGREGATE_RESPONSE_STEPS
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_sync_log_written_after_sync(self, mock_api):
+        mock_api.return_value = AGGREGATE_RESPONSE_STEPS
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
@@ -355,84 +338,23 @@ class TestSyncLogWritten:
 
 
 class TestSyncExceptions:
-    @patch("urllib.request.urlopen")
-    @patch("importers.health_connect.sync.logger")
-    def test_make_health_request_handles_timeout(self, mock_logger, mock_urlopen):
-        mock_urlopen.side_effect = TimeoutError("timed out")
+    @patch(f"{SYNC_MOD}._api_get")
+    @patch(f"{SYNC_MOD}.logger")
+    def test_api_get_failure_returns_none(self, mock_logger, mock_api):
+        mock_api.side_effect = RuntimeError("boom")
 
-        result = make_health_request(make_mock_creds(), "steps", 0, 0)
-
-        assert result is None
-        mock_logger.warning.assert_called_once()
-
-    @patch("urllib.request.urlopen")
-    @patch("importers.health_connect.sync.logger")
-    def test_make_health_request_handles_unexpected_exception(self, mock_logger, mock_urlopen):
-        mock_urlopen.side_effect = RuntimeError("boom")
-
-        result = make_health_request(make_mock_creds(), "steps", 0, 0)
+        result = _api_get(make_mock_creds(), "https://example.com")
 
         assert result is None
         mock_logger.warning.assert_called_once()
 
-    @patch("urllib.request.urlopen")
-    @patch("importers.health_connect.sync.logger")
-    def test_sync_exercise_handles_http_error(self, mock_logger, mock_urlopen):
-        import urllib.error
-
-        mock_urlopen.side_effect = urllib.error.HTTPError(
-            "url", 500, "Internal Server Error", {}, None
-        )
+    @patch(f"{SYNC_MOD}._api_get")
+    @patch(f"{SYNC_MOD}.logger")
+    def test_sync_exercise_handles_api_error(self, mock_logger, mock_api):
+        mock_api.return_value = None
         creds = make_mock_creds()
         supabase = make_mock_supabase()
 
         imported, skipped = sync_exercise(creds, supabase, 0, 0)
         assert imported == 0
         assert skipped == 0
-        mock_logger.warning.assert_called_once()
-
-    @patch("urllib.request.urlopen")
-    @patch("importers.health_connect.sync.logger")
-    def test_sync_exercise_handles_url_error(self, mock_logger, mock_urlopen):
-        import urllib.error
-
-        mock_urlopen.side_effect = urllib.error.URLError("Network down")
-        creds = make_mock_creds()
-        supabase = make_mock_supabase()
-
-        imported, skipped = sync_exercise(creds, supabase, 0, 0)
-        assert imported == 0
-        assert skipped == 0
-        mock_logger.warning.assert_called_once()
-
-    @patch("urllib.request.urlopen")
-    @patch("importers.health_connect.sync.logger")
-    def test_sync_exercise_handles_json_decode_error(self, mock_logger, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b"not json"
-        mock_resp.__enter__.return_value = mock_resp
-        mock_urlopen.return_value = mock_resp
-
-        creds = make_mock_creds()
-        supabase = make_mock_supabase()
-
-        imported, skipped = sync_exercise(creds, supabase, 0, 0)
-        assert imported == 0
-        assert skipped == 0
-        mock_logger.warning.assert_called_once()
-
-    @patch("urllib.request.urlopen")
-    @patch("importers.health_connect.sync.logger")
-    def test_sync_exercise_handles_unicode_decode_error(self, mock_logger, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b"\xff"
-        mock_resp.__enter__.return_value = mock_resp
-        mock_urlopen.return_value = mock_resp
-
-        creds = make_mock_creds()
-        supabase = make_mock_supabase()
-
-        imported, skipped = sync_exercise(creds, supabase, 0, 0)
-        assert imported == 0
-        assert skipped == 0
-        mock_logger.warning.assert_called_once()
