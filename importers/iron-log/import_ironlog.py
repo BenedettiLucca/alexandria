@@ -18,6 +18,7 @@ from hashlib import sha256
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
     connect_supabase,
+    dedup_by_external_id,
     upsert_record,
     record_sync,
     format_timestamp,
@@ -82,8 +83,7 @@ def import_sessions(db_path, supabase):
 
         external_id = str(session["id"])
 
-        if upsert_record(supabase, "training_logs", {}, "iron-log", external_id).data:
-            # Existing record found by upsert, skip
+        if dedup_by_external_id(supabase, "training_logs", "iron-log", external_id):
             skipped += 1
             continue
 

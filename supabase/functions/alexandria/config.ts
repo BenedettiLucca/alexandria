@@ -43,15 +43,3 @@ export type AuthContext = {
   userId: string;
   email?: string;
 };
-
-export function getUserClient(auth?: AuthContext) {
-  if (auth?.method === "jwt") {
-    return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      global: {
-        headers: { Authorization: `Bearer ${auth.userId}` },
-      },
-      auth: { persistSession: false },
-    });
-  }
-  return supabase;
-}

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getUserClient, AuthContext } from "../config.ts";
+import { supabase, AuthContext } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
 
 
@@ -22,7 +22,7 @@ export function registerProfileTools(
     },
     wrapHandler(async ({ key }) => {
       const auth = getAuth();
-      const client = getUserClient(auth);
+      const client = supabase;
       const isJwt = auth?.method === "jwt";
       const qBase = isJwt
         ? client.from("profile").select("key, value, updated_at").eq(
@@ -71,7 +71,7 @@ export function registerProfileTools(
     },
     wrapHandler(async ({ key, value }) => {
       const auth = getAuth();
-      const client = getUserClient(auth);
+      const client = supabase;
       const isJwt = auth?.method === "jwt";
       const ownerFilter = isJwt
         ? { owner_id: auth!.userId }
@@ -113,7 +113,7 @@ export function registerProfileTools(
       if (auth.email) lines.push(`Email: ${auth.email}`);
 
       if (auth.method === "jwt") {
-        const client = getUserClient(auth);
+        const client = supabase;
         const { data: profileKeys, error } = await client
           .from("profile")
           .select("key")
