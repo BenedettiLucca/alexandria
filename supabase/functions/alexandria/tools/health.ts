@@ -2,11 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
-import {   } from "../types.ts";
+
 import {
   computeBodyCompDelta,
   extractBodyCompMetrics,
   formatBodyCompSummary,
+  formatDailyHealthSummary,
+  formatHealthEntry,
   recordToText,
 } from "../lib.ts";
 
@@ -126,15 +128,7 @@ export function registerHealthTools(
       if (!data?.length) return "No health entries found.";
 
       const results = data.map(
-        (e: any, i: number) => {          const ts = new Date(e.timestamp).toLocaleString();
-          const dur = e.duration_s
-            ? ` (${Math.round(e.duration_s / 60)}min)`
-            : "";
-          const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
-          return `${i + 1}. [${ts}] ${e.entry_type}${dur}${numVal}\n   ${
-            JSON.stringify(e.value)
-          }`;
-        },
+        (e: any, i: number) => formatHealthEntry(e, i),
       );
       return `${data.length} health entries:\n\n${results.join("\n\n")}`;
     }),
@@ -232,50 +226,7 @@ export function registerHealthTools(
         return "No summary computed yet. Use refresh_summary to generate one.";
       }
 
-      const lines = data.map((s: any) => {
-        const parts = [`== ${s.date} ==`];
-        if (s.sleep_total_hours != null) {
-          parts.push(
-            `Sleep: ${s.sleep_total_hours}h (${s.sleep_sessions || 0} sessions)`,
-          );
-        }
-        if (s.steps_total != null) {
-          parts.push(
-            `Steps: ${s.steps_total}${
-              s.steps_active_minutes
-                ? ` (${s.steps_active_minutes}min active)`
-                : ""
-            }`,
-          );
-        }
-        if (s.hr_avg != null) {
-          parts.push(
-            `HR: avg ${s.hr_avg} / min ${s.hr_min} / max ${s.hr_max} bpm (${s.hr_samples} samples)`,
-          );
-        }
-        if (s.weight_kg != null) parts.push(`Weight: ${s.weight_kg}kg`);
-        if (s.exercise_count > 0) {
-          parts.push(
-            `Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${
-              s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""
-            }`,
-          );
-        }
-        if (s.workout_count > 0) {
-          parts.push(
-            `Training: ${s.workout_count} workouts${
-              s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""
-            }${
-              s.training_types?.length ? ` [${s.training_types.join(", ")}]` : ""
-            }`,
-          );
-        }
-        if (s.sources?.length) parts.push(`Sources: ${s.sources.join(", ")}`);
-        if (s.computed_at) {
-          parts.push(`Computed: ${new Date(s.computed_at).toLocaleString()}`);
-        }
-        return parts.join("\n");
-      });
+      const lines = data.map((s: any) => formatDailyHealthSummary(s));
 
       return `${data.length} day(s):\n\n${lines.join("\n\n")}`;
     }),

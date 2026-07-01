@@ -65,46 +65,6 @@ from importers.shared import (
     format_date,
 )
 
-# Google Health API data types mapped to Alexandria entry_type
-HEALTH_DATA_TYPES = {
-    "steps": {
-        "endpoint": "steps",
-        "alexandria_type": "steps",
-        "tags": ["health-connect", "steps"],
-    },
-    "weight": {
-        "endpoint": "weight",
-        "alexandria_type": "weight",
-        "tags": ["health-connect", "weight"],
-    },
-    "heart-rate": {
-        "endpoint": "heart-rate",
-        "alexandria_type": "heart_rate",
-        "tags": ["health-connect", "heart-rate"],
-    },
-    "blood-pressure": {
-        "endpoint": "blood-pressure",
-        "alexandria_type": "blood_pressure",
-        "tags": ["health-connect", "blood-pressure"],
-    },
-    "active-minutes": {
-        "endpoint": "active-minutes",
-        "alexandria_type": "exercise",
-        "tags": ["health-connect", "activity"],
-    },
-    "exercise": {
-        "endpoint": "exercise",
-        "alexandria_type": "exercise",
-        "tags": ["health-connect", "exercise"],
-    },
-    "nutrition": {
-        "endpoint": "nutrition",
-        "alexandria_type": "nutrition",
-        "tags": ["health-connect", "nutrition"],
-    },
-}
-
-
 def get_credentials():
     """Handle OAuth2 authentication for Google Health API."""
     try:

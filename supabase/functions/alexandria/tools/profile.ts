@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getUserClient, AuthContext } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
-import {  } from "../types.ts";
+
 
 export function registerProfileTools(
   server: McpServer,

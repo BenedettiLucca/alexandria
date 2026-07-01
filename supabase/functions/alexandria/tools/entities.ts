@@ -2,13 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
-import {
-  EntityRow,
-  EntityMentionRow,
-  MemoryRow,
-  SyncLogRow,
-} from "../types.ts";
-
 export function registerEntitiesTools(
   server: McpServer,
   _getAuth: () => AuthContext | undefined,

@@ -5,7 +5,6 @@ import {
   computeBodyCompDelta,
   computeBriefContentHash,
   extractBodyCompMetrics,
-  extractNumericValue,
   formatBodyCompSummary,
   normalizeBriefBody,
   normalizeStringArray,
@@ -13,7 +12,6 @@ import {
   sanitizeClassification,
   simpleClassify,
   VALID_CATEGORIES,
-  VALID_SOURCES,
   workoutToText,
 } from "./lib.ts";
 
@@ -388,57 +386,6 @@ Deno.test("workoutToText uses workout_date for date", () => {
   );
 });
 
-// --- extractNumericValue ---
-
-Deno.test("extractNumericValue extracts steps count", () => {
-  assertEquals(extractNumericValue("steps", { count: 10000 }), 10000);
-});
-
-Deno.test("extractNumericValue extracts heart_rate bpm", () => {
-  assertEquals(extractNumericValue("heart_rate", { bpm: 72 }), 72);
-});
-
-Deno.test("extractNumericValue extracts weight weight_kg", () => {
-  assertEquals(extractNumericValue("weight", { weight_kg: 75.5 }), 75.5);
-});
-
-Deno.test("extractNumericValue extracts sleep duration_hours", () => {
-  assertEquals(extractNumericValue("sleep", { duration_hours: 7.5 }), 7.5);
-});
-
-Deno.test("extractNumericValue extracts exercise duration_min", () => {
-  assertEquals(extractNumericValue("exercise", { duration_min: 45 }), 45);
-});
-
-Deno.test("extractNumericValue extracts exercise calories as fallback", () => {
-  assertEquals(extractNumericValue("exercise", { calories: 300 }), 300);
-});
-
-Deno.test("extractNumericValue extracts blood_pressure systolic", () => {
-  assertEquals(
-    extractNumericValue("blood_pressure", { systolic: 120, diastolic: 80 }),
-    120,
-  );
-});
-
-Deno.test("extractNumericValue extracts body_composition weight_kg", () => {
-  assertEquals(
-    extractNumericValue("body_composition", { weight_kg: 75, body_fat: 15 }),
-    75,
-  );
-});
-
-Deno.test("extractNumericValue returns null for unknown type", () => {
-  assertEquals(extractNumericValue("foobar", { some_value: 42 }), null);
-});
-
-Deno.test("extractNumericValue returns null for missing value", () => {
-  assertEquals(
-    extractNumericValue("steps", null as unknown as Record<string, unknown>),
-    null,
-  );
-});
-
 // --- Constants ---
 
 Deno.test("VALID_CATEGORIES contains expected categories", () => {
@@ -458,22 +405,6 @@ Deno.test("VALID_CATEGORIES contains expected categories", () => {
   assertEquals([...VALID_CATEGORIES], expected);
   assertEquals(VALID_CATEGORIES.length, 11);
 });
-
-Deno.test("VALID_SOURCES contains expected sources", () => {
-  const expected = [
-    "manual",
-    "mcp",
-    "import",
-    "capture",
-    "health-connect",
-    "iron-log",
-    "auto",
-  ];
-  assertEquals([...VALID_SOURCES], expected);
-  assertEquals(VALID_SOURCES.length, 7);
-});
-
-// --- numeric_value in training_logs context ---
 
 Deno.test("workoutToText includes numeric_value when present", () => {
   const result = workoutToText({

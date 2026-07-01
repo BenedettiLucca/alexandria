@@ -12,16 +12,6 @@ export const VALID_CATEGORIES = [
   "quote",
 ] as const;
 
-export const VALID_SOURCES = [
-  "manual",
-  "mcp",
-  "import",
-  "capture",
-  "health-connect",
-  "iron-log",
-  "auto",
-] as const;
-
 export function normalizeStringArray(
   values: unknown,
   opts: { lowercase?: boolean; maxItems?: number } = {},
@@ -258,34 +248,99 @@ export function briefToText(record: Record<string, unknown>): string {
   return parts.join("\n");
 }
 
-export function extractNumericValue(
-  entryType: string,
-  value: Record<string, unknown>,
-): number | null {
-  if (!value) return null;
+export function memoryToText(
+  record: Record<string, unknown>,
+  opts: { index?: number; includeSimilarity?: boolean } = {},
+): string {
+  const parts = [];
+  const similarity = record.similarity as number | undefined;
+  const i = opts.index;
 
-  switch (entryType) {
-    case "steps":
-      return typeof value.count === "number" ? value.count : null;
-    case "heart_rate":
-      return typeof value.bpm === "number" ? value.bpm : null;
-    case "weight":
-      return typeof value.weight_kg === "number" ? value.weight_kg : null;
-    case "sleep":
-      return typeof value.duration_hours === "number"
-        ? value.duration_hours
-        : null;
-    case "exercise":
-      if (typeof value.duration_min === "number") return value.duration_min;
-      if (typeof value.calories === "number") return value.calories;
-      return null;
-    case "blood_pressure":
-      return typeof value.systolic === "number" ? value.systolic : null;
-    case "body_composition":
-      return typeof value.weight_kg === "number" ? value.weight_kg : null;
-    default:
-      return null;
+  if (opts.includeSimilarity && similarity != null) {
+    parts.push(
+      `--- ${i != null ? i + 1 + ". " : ""}${(similarity * 100).toFixed(1)}% match ---`,
+    );
+  } else if (i != null) {
+    parts.push(`${i + 1}. [${new Date(record.created_at as string).toLocaleDateString()}] ${record.category}`);
   }
+
+  if (opts.includeSimilarity || i == null) {
+    parts.push(`Title: ${record.title || "Untitled"}`);
+    parts.push(`Category: ${record.category} | Importance: ${record.importance ?? 0}/10`);
+    parts.push(`Date: ${new Date(record.created_at as string).toLocaleDateString()}`);
+  }
+
+  if (record.tags && Array.isArray(record.tags) && record.tags.length) {
+    parts.push(`Tags: ${record.tags.join(", ")}`);
+  }
+
+  if (opts.includeSimilarity || i == null) {
+    parts.push(`\n${record.content}`);
+  } else {
+    parts.push(`   ${record.title || (record.content as string).slice(0, 120)}`);
+  }
+
+  return parts.join("\n");
+}
+
+export function formatMemoryStats(data: {
+  count: number;
+  entries: Array<{
+    category: string;
+    tags?: string[];
+    people?: string[];
+    created_at: string;
+  }>;
+}): string {
+  const { count, entries } = data;
+  const cats: Record<string, number> = {};
+  const tags: Record<string, number> = {};
+  const people: Record<string, number> = {};
+
+  for (const r of entries) {
+    if (r.category) cats[r.category] = (cats[r.category] || 0) + 1;
+    if (r.tags) {
+      for (const t of r.tags) tags[t] = (tags[t] || 0) + 1;
+    }
+    if (r.people) {
+      for (const p of r.people) people[p] = (people[p] || 0) + 1;
+    }
+  }
+
+  const sort = (o: Record<string, number>) =>
+    Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+  const lines = [
+    `Library of Alexandria -- Memory Statistics`,
+    `Total memories: ${count}`,
+    `Date range: ${
+      entries.length
+        ? new Date(entries[entries.length - 1].created_at).toLocaleDateString() +
+          " -> " +
+          new Date(entries[0].created_at).toLocaleDateString()
+        : "N/A"
+    }`,
+    "",
+    "Categories:",
+    ...sort(cats).map(([k, v]) => `  ${k}: ${v}`),
+  ];
+
+  if (Object.keys(tags).length) {
+    lines.push(
+      "",
+      "Top tags:",
+      ...sort(tags).map(([k, v]) => `  ${k}: ${v}`),
+    );
+  }
+  if (Object.keys(people).length) {
+    lines.push(
+      "",
+      "People:",
+      ...sort(people).map(([k, v]) => `  ${k}: ${v}`),
+    );
+  }
+
+  return lines.join("\n");
 }
 
 export function extractBodyCompMetrics(
@@ -332,6 +387,62 @@ export function computeBodyCompDelta(
     }
   }
   return deltas;
+}
+
+export function formatHealthEntry(
+  e: Record<string, any>,
+  index?: number,
+): string {
+  const ts = new Date(e.timestamp as string).toLocaleString();
+  const dur = e.duration_s
+    ? ` (${Math.round((e.duration_s as number) / 60)}min)`
+    : "";
+  const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
+  const prefix = index != null ? `${index + 1}. ` : "";
+  return `${prefix}[${ts}] ${e.entry_type}${dur}${numVal}\n   ${
+    JSON.stringify(e.value)
+  }`;
+}
+
+export function formatDailyHealthSummary(s: Record<string, any>): string {
+  const parts = [`== ${s.date} ==`];
+  if (s.sleep_total_hours != null) {
+    parts.push(
+      `Sleep: ${s.sleep_total_hours}h (${s.sleep_sessions || 0} sessions)`,
+    );
+  }
+  if (s.steps_total != null) {
+    parts.push(
+      `Steps: ${s.steps_total}${
+        s.steps_active_minutes ? ` (${s.steps_active_minutes}min active)` : ""
+      }`,
+    );
+  }
+  if (s.hr_avg != null) {
+    parts.push(
+      `HR: avg ${s.hr_avg} / min ${s.hr_min} / max ${s.hr_max} bpm (${s.hr_samples} samples)`,
+    );
+  }
+  if (s.weight_kg != null) parts.push(`Weight: ${s.weight_kg}kg`);
+  if (s.exercise_count > 0) {
+    parts.push(
+      `Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${
+        s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""
+      }`,
+    );
+  }
+  if (s.workout_count > 0) {
+    parts.push(
+      `Training: ${s.workout_count} workouts${
+        s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""
+      }${s.training_types?.length ? ` [${s.training_types.join(", ")}]` : ""}`,
+    );
+  }
+  if (s.sources?.length) parts.push(`Sources: ${s.sources.join(", ")}`);
+  if (s.computed_at) {
+    parts.push(`Computed: ${new Date(s.computed_at).toLocaleString()}`);
+  }
+  return parts.join("\n");
 }
 
 export function formatBodyCompSummary(

@@ -1,7 +1,6 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.12";
 import {
   recordToText,
-  extractNumericValue,
   extractBodyCompMetrics,
   computeBodyCompDelta,
   formatBodyCompSummary,
@@ -58,22 +57,6 @@ Deno.test("recordToText serializes body_composition entry correctly", () => {
   const text = recordToText("body_composition", record);
   assertEquals(text.includes("Body composition on"), true);
   assertEquals(text.includes('"weight_kg":80'), true);
-});
-
-Deno.test("extractNumericValue returns correct value for each type", () => {
-  assertEquals(extractNumericValue("steps", { count: 1000 }), 1000);
-  assertEquals(extractNumericValue("heart_rate", { bpm: 70 }), 70);
-  assertEquals(extractNumericValue("weight", { weight_kg: 80 }), 80);
-  assertEquals(extractNumericValue("sleep", { duration_hours: 8 }), 8);
-  assertEquals(extractNumericValue("exercise", { duration_min: 30 }), 30);
-  assertEquals(extractNumericValue("exercise", { calories: 300 }), 300);
-  assertEquals(extractNumericValue("blood_pressure", { systolic: 120 }), 120);
-  assertEquals(extractNumericValue("body_composition", { weight_kg: 80 }), 80);
-});
-
-Deno.test("extractNumericValue returns null for missing key", () => {
-  assertEquals(extractNumericValue("steps", {}), null);
-  assertEquals(extractNumericValue("unknown", { val: 10 }), null);
 });
 
 Deno.test("extractBodyCompMetrics extracts all 9 fields", () => {

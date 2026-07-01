@@ -7,10 +7,12 @@ import {
   processEntities,
   wrapHandler,
 } from "../helpers.ts";
-import {  } from "../types.ts";
+
 import {
   VALID_CATEGORIES,
   simpleClassify,
+  memoryToText,
+  formatMemoryStats,
 } from "../lib.ts";
 
 export function registerMemoriesTools(
@@ -50,17 +52,7 @@ export function registerMemoriesTools(
         (
           t: any,
           i: number,
-        ) => {
-          const parts = [
-            `--- ${i + 1}. ${(t.similarity! * 100).toFixed(1)}% match ---`,
-            `Title: ${t.title || "Untitled"}`,
-            `Category: ${t.category} | Importance: ${(t.importance ?? 0)}/10`,
-            `Date: ${new Date(t.created_at).toLocaleDateString()}`,
-          ];
-          if (t.tags?.length) parts.push(`Tags: ${t.tags.join(", ")}`);
-          parts.push(`\n${t.content}`);
-          return parts.join("\n");
-        },
+        ) => memoryToText(t, { index: i, includeSimilarity: true }),
       );
 
       return `Found ${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${
@@ -211,14 +203,7 @@ export function registerMemoriesTools(
           (
             t: any,
             i: number,
-          ) => {
-            const tags = t.tags?.length ? ` [${t.tags.join(", ")}]` : "";
-            return `${i + 1}. [${
-              new Date(t.created_at).toLocaleDateString()
-            }] ${t.category}${tags} (${t.importance}/10)\n   ${
-              t.title || t.content.slice(0, 120)
-            }`;
-          },
+          ) => memoryToText(t, { index: i }),
         );
 
         return `${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${
@@ -246,54 +231,7 @@ export function registerMemoriesTools(
         .select("category, tags, people, importance, created_at")
         .order("created_at", { ascending: false });
 
-      const cats: Record<string, number> = {};
-      const tags: Record<string, number> = {};
-      const people: Record<string, number> = {};
-
-      for (const r of data || []) {
-        if (r.category) cats[r.category] = (cats[r.category] || 0) + 1;
-        if (r.tags) {
-          for (const t of r.tags) tags[t] = (tags[t] || 0) + 1;
-        }
-        if (r.people) {
-          for (const p of r.people) people[p] = (people[p] || 0) + 1;
-        }
-      }
-
-      const sort = (o: Record<string, number>) =>
-        Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 10);
-
-      const lines = [
-        `Library of Alexandria -- Memory Statistics`,
-        `Total memories: ${count}`,
-        `Date range: ${
-          data?.length
-            ? new Date(data[data.length - 1].created_at).toLocaleDateString() +
-              " -> " +
-              new Date(data[0].created_at).toLocaleDateString()
-            : "N/A"
-        }`,
-        "",
-        "Categories:",
-        ...sort(cats).map(([k, v]) => `  ${k}: ${v}`),
-      ];
-
-      if (Object.keys(tags).length) {
-        lines.push(
-          "",
-          "Top tags:",
-          ...sort(tags).map(([k, v]) => `  ${k}: ${v}`),
-        );
-      }
-      if (Object.keys(people).length) {
-        lines.push(
-          "",
-          "People:",
-          ...sort(people).map(([k, v]) => `  ${k}: ${v}`),
-        );
-      }
-
-      return lines.join("\n");
+      return formatMemoryStats({ count: count || 0, entries: data || [] });
     }),
   );
 
