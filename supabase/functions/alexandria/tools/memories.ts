@@ -133,7 +133,7 @@ export function registerMemoriesTools(
         try {
           const rawEntities = Array.isArray(cl.entities) ? cl.entities : [];
           if (rawEntities.length > 0 && thoughtId) {
-            await processEntities(content, thoughtId as string, rawEntities);
+            await processEntities(thoughtId as string, rawEntities);
           }
         } catch { /* non-blocking */ }
 

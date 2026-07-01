@@ -100,50 +100,6 @@ export function wrapHandler(fn: (input: any) => Promise<string>) {
   };
 }
 
-export async function queryTable<T = Record<string, unknown>>(
-  table: string,
-  select: string,
-  opts: {
-    filters?: Record<string, unknown>;
-    days?: number;
-    daysColumn?: string;
-    limit?: number;
-    order?: string;
-    ascending?: boolean;
-    orderOpts?: { ascending: boolean; nullsFirst: boolean };
-  } = {},
-): Promise<T[]> {
-  const {
-    filters = {},
-    days,
-    daysColumn = "created_at",
-    limit = 20,
-    order = "created_at",
-    ascending = false,
-    orderOpts,
-  } = opts;
-
-  let q = supabase
-    .from(table)
-    .select(select)
-    .order(order, orderOpts ?? { ascending, nullsFirst: false })
-    .limit(limit);
-
-  for (const [col, val] of Object.entries(filters)) {
-    q = q.eq(col, val);
-  }
-
-  if (days) {
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-    q = q.gte(daysColumn, since.toISOString());
-  }
-
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-  return (data as T[]) || [];
-}
-
 const VALID_ENTITY_TYPES = [
   "person",
   "project",
@@ -156,7 +112,6 @@ const VALID_ENTITY_TYPES = [
 ] as const;
 
 export async function processEntities(
-  _content: string,
   memoryId: string,
   rawEntities: unknown[],
 ) {

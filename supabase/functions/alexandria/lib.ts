@@ -14,9 +14,9 @@ export const VALID_CATEGORIES = [
 
 export function normalizeStringArray(
   values: unknown,
-  opts: { lowercase?: boolean; maxItems?: number } = {},
+  opts: { lowercase?: boolean } = {},
 ): string[] {
-  const { lowercase = false, maxItems = 25 } = opts;
+  const { lowercase = false } = opts;
   if (!Array.isArray(values)) return [];
 
   const normalized = values
@@ -24,7 +24,7 @@ export function normalizeStringArray(
     .filter(Boolean)
     .map((value) => lowercase ? value.toLowerCase() : value);
 
-  return [...new Set(normalized)].slice(0, maxItems);
+  return [...new Set(normalized)].slice(0, 25);
 }
 
 export function normalizeBriefBody(body: string): string {

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
-import { wrapHandler, queryTable } from "../helpers.ts";
+import { wrapHandler } from "../helpers.ts";
 
 
 export function registerProjectsTools(
@@ -20,19 +20,18 @@ export function registerProjectsTools(
       },
     },
     wrapHandler(async ({ status }) => {
-      const data = await queryTable(
-        "projects",
-        "id, name, path, status, stack, created_at, updated_at",
-        {
-          filters: status ? { status } : {},
-          order: "updated_at",
-          ascending: false,
-        },
-      );
+      let q = supabase
+        .from("projects")
+        .select("id, name, path, status, stack, created_at, updated_at")
+        .order("updated_at", { ascending: false, nullsFirst: false });
+      if (status) q = q.eq("status", status);
+      const { data, error } = await q.limit(20);
+      if (error) throw new Error(error.message);
+      const projects = data || [];
 
-      if (!data.length) return "No projects tracked yet.";
+      if (!projects.length) return "No projects tracked yet.";
 
-      const results = data.map(
+      const results = projects.map(
         (p: any, i: number) => {
           const stack = p.stack?.length ? ` [${p.stack.join(", ")}]` : "";
           return `${i + 1}. ${p.name} (${p.status})${stack}\n   Path: ${
@@ -40,7 +39,7 @@ export function registerProjectsTools(
           } | Updated: ${new Date(p.updated_at).toLocaleDateString()}`;
         },
       );
-      return `${data.length} project(s):\n\n${results.join("\n\n")}`;
+      return `${projects.length} project(s):\n\n${results.join("\n\n")}`;
     }),
   );
 
