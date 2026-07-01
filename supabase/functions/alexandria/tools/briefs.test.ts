@@ -17,10 +17,16 @@ Deno.test("briefToText produces string output", () => {
   assertEquals(typeof text, "string");
 });
 
-Deno.test("computeBriefContentHash is deterministic", () => {
-  const body = "conteúdo do brief";
-  const h1 = computeBriefContentHash(body);
-  const h2 = computeBriefContentHash(body);
+Deno.test("computeBriefContentHash is deterministic", async () => {
+  const input = {
+    source_job: "test",
+    title: "Test",
+    brief_date: "2026-01-01",
+    kind: "report",
+    body_markdown: "conteúdo do brief",
+  };
+  const h1 = await computeBriefContentHash(input);
+  const h2 = await computeBriefContentHash(input);
   assertEquals(h1, h2);
 });
 
