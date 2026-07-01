@@ -146,7 +146,6 @@ STEPS_CONFIG = {
     "tags": ["steps"],
     "label": "Steps",
     "build_value": lambda r: {"count": int(r.get("count") or r.get("steps") or 0)},
-    "extract_numeric": lambda r, v: extract_numeric_value("steps", v),
     "build_external_id": lambda r: sha256(
         f"hc-steps-{format_date(r.get('start_time') or r.get('starttime'))}".encode()
     ).hexdigest(),
@@ -181,7 +180,6 @@ SLEEP_CONFIG = {
             ),
         }
     ),
-    "extract_numeric": lambda r, v: extract_numeric_value("sleep", v),
     "build_external_id": lambda r: sha256(
         f"hc-sleep-{r.get('start_time') or r.get('starttime')}-{r.get('end_time') or r.get('endtime')}".encode()
     ).hexdigest(),
@@ -248,7 +246,6 @@ HEART_RATE_CONFIG = {
             r.get("beats_per_minute") or r.get("bpm") or r.get("heart_rate") or 0
         )
     },
-    "extract_numeric": lambda r, v: extract_numeric_value("heart_rate", v),
     "build_external_id": lambda r: sha256(
         f"hc-hr-{r.get('time') or r.get('start_time') or r.get('timestamp')}".encode()
     ).hexdigest(),
@@ -265,7 +262,6 @@ WEIGHT_CONFIG = {
     "build_value": lambda r: {
         "weight_kg": float(r.get("weight") or r.get("weight_kg") or 0)
     },
-    "extract_numeric": lambda r, v: extract_numeric_value("weight", v),
     "build_external_id": lambda r: sha256(
         f"hc-weight-{r.get('time') or r.get('start_time') or r.get('timestamp')}".encode()
     ).hexdigest(),
@@ -291,7 +287,6 @@ BLOOD_PRESSURE_CONFIG = {
             else {}
         ),
     },
-    "extract_numeric": lambda r, v: extract_numeric_value("blood_pressure", v),
     "build_external_id": lambda r: sha256(
         f"hc-bp-{r.get('time') or r.get('start_time')}".encode()
     ).hexdigest(),

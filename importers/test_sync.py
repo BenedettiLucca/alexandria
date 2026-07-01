@@ -3,12 +3,7 @@ import sys
 import importlib.util
 from unittest.mock import patch, MagicMock, MagicMock as MockModule
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-if "supabase" not in sys.modules:
-    mock_supabase_mod = MockModule()
-    mock_supabase_mod.create_client = MagicMock()
-    sys.modules["supabase"] = mock_supabase_mod
 
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

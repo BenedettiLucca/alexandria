@@ -13,15 +13,7 @@ import json
 import hashlib
 from datetime import datetime, timezone
 
-# Resolve name collision with local "supabase" directory when importing
-# third-party supabase package
-_orig_sys_path = list(sys.path)
-try:
-    _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sys.path = [p for p in sys.path if p not in ("", ".", _project_root, os.getcwd())]
-    from supabase import create_client
-finally:
-    sys.path = _orig_sys_path
+from supabase import create_client
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
@@ -51,10 +43,7 @@ def get_canonical_vault_path(file_path, vault_dir=None):
     if vault_dir:
         abs_vault_dir = os.path.abspath(vault_dir).replace("\\", "/")
         parent_dir = os.path.dirname(abs_vault_dir.rstrip("/"))
-        try:
-            return os.path.relpath(abs_path, parent_dir).replace("\\", "/")
-        except Exception:
-            pass
+        return os.path.relpath(abs_path, parent_dir).replace("\\", "/")
             
     return os.path.basename(file_path)
 
@@ -84,6 +73,20 @@ def compute_brief_content_hash(source_job, title, brief_date, kind, body_markdow
     }
     canonical_json = json.dumps(canonical_dict, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def _extract_set(frontmatter, key):
+    res_set = set()
+    val = frontmatter.get(key, [])
+    if isinstance(val, list):
+        for item in val:
+            if isinstance(item, str) and item.strip():
+                res_set.add(item.strip())
+    elif isinstance(val, str):
+        parts_list = [x.strip() for x in val.split(",") if x.strip()]
+        for item in parts_list:
+            res_set.add(item)
+    return res_set
 
 
 def parse_markdown_content(content, file_path):
@@ -182,16 +185,7 @@ def parse_markdown_content(content, file_path):
         date_val = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         
     # Participants extraction
-    participants_set = set()
-    frontmatter_participants = frontmatter.get("participants", [])
-    if isinstance(frontmatter_participants, list):
-        for p in frontmatter_participants:
-            if isinstance(p, str) and p.strip():
-                participants_set.add(p.strip())
-    elif isinstance(frontmatter_participants, str):
-        parts_list = [x.strip() for x in frontmatter_participants.split(",") if x.strip()]
-        for p in parts_list:
-            participants_set.add(p)
+    participants_set = _extract_set(frontmatter, "participants")
             
     # Extract inline mentions
     inline_participants = extract_inline_mentions(content)
@@ -201,16 +195,7 @@ def parse_markdown_content(content, file_path):
     participants = sorted(list(participants_set))
     
     # Project refs extraction
-    project_refs_set = set()
-    frontmatter_projects = frontmatter.get("project_refs", [])
-    if isinstance(frontmatter_projects, list):
-        for p in frontmatter_projects:
-            if isinstance(p, str) and p.strip():
-                project_refs_set.add(p.strip())
-    elif isinstance(frontmatter_projects, str):
-        parts_list = [x.strip() for x in frontmatter_projects.split(",") if x.strip()]
-        for p in parts_list:
-            project_refs_set.add(p)
+    project_refs_set = _extract_set(frontmatter, "project_refs")
             
     normalized_path = os.path.abspath(file_path).replace("\\", "/")
     match_proj = re.search(r"[pP]rojects/([^/]+)/[mM]eetings/", normalized_path)
@@ -220,16 +205,7 @@ def parse_markdown_content(content, file_path):
     project_refs = sorted(list(project_refs_set))
     
     # Topics extraction
-    topics_set = set()
-    frontmatter_topics = frontmatter.get("topics", [])
-    if isinstance(frontmatter_topics, list):
-        for t in frontmatter_topics:
-            if isinstance(t, str) and t.strip():
-                topics_set.add(t.strip())
-    elif isinstance(frontmatter_topics, str):
-        parts_list = [x.strip() for x in frontmatter_topics.split(",") if x.strip()]
-        for t in parts_list:
-            topics_set.add(t)
+    topics_set = _extract_set(frontmatter, "topics")
             
     for line in body_markdown.splitlines():
         m = re.match(r"^#{1,6}\s+(.+)$", line)
@@ -241,16 +217,7 @@ def parse_markdown_content(content, file_path):
     topics = sorted(list(topics_set))
     
     # Entity refs extraction
-    entity_refs_set = set()
-    frontmatter_entities = frontmatter.get("entity_refs", [])
-    if isinstance(frontmatter_entities, list):
-        for e in frontmatter_entities:
-            if isinstance(e, str) and e.strip():
-                entity_refs_set.add(e.strip())
-    elif isinstance(frontmatter_entities, str):
-        parts_list = [x.strip() for x in frontmatter_entities.split(",") if x.strip()]
-        for e in parts_list:
-            entity_refs_set.add(e)
+    entity_refs_set = _extract_set(frontmatter, "entity_refs")
             
     entity_refs = sorted(list(entity_refs_set))
     
@@ -316,7 +283,7 @@ def import_meetcap_briefs(vault_dir, supabase):
             
             # Query by content hash
             query_1 = supabase.table("briefs").select("id, content_hash").eq("source_job", "meetcap").eq("content_hash", content_hash)
-            existing = query_1.maybe_single().execute() if hasattr(query_1, "maybe_single") else query_1.maybeSingle().execute()
+            existing = query_1.maybe_single().execute()
             
             existing_data = existing.data
             if isinstance(existing_data, list) and existing_data:
@@ -330,7 +297,7 @@ def import_meetcap_briefs(vault_dir, supabase):
                 
             # Query by path to check if same file has updated content
             query_2 = supabase.table("briefs").select("id, content_hash").eq("source_job", "meetcap").filter("metadata->>note_path", "eq", note_path)
-            existing_by_path = query_2.maybe_single().execute() if hasattr(query_2, "maybe_single") else query_2.maybeSingle().execute()
+            existing_by_path = query_2.maybe_single().execute()
             
             existing_by_path_data = existing_by_path.data
             if isinstance(existing_by_path_data, list) and existing_by_path_data:

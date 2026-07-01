@@ -5,12 +5,7 @@ import tempfile
 import importlib.util
 from unittest.mock import patch, MagicMock, MagicMock as MockModule
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-if "supabase" not in sys.modules:
-    mock_supabase_mod = MockModule()
-    mock_supabase_mod.create_client = MagicMock()
-    sys.modules["supabase"] = mock_supabase_mod
+from importers.conftest import db_to_file as save_db_to_file
 
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -136,20 +131,7 @@ def create_hc_db():
     return db
 
 
-def save_db_to_file(db):
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    conn = sqlite3.connect(path)
-    sql = "\n".join(
-        line
-        for line in db.iterdump()
-        if line.strip()
-        and not line.strip().startswith("COMMIT")
-        and not line.strip().startswith("BEGIN TRANSACTION")
-    )
-    conn.executescript(sql)
-    conn.close()
-    return path
+
 
 
 def make_mock_supabase(existing_data=None):

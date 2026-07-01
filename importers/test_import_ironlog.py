@@ -6,12 +6,7 @@ import json
 import importlib.util
 from unittest.mock import MagicMock, MagicMock as MockModule
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-if "supabase" not in sys.modules:
-    mock_supabase_mod = MockModule()
-    mock_supabase_mod.create_client = MagicMock()
-    sys.modules["supabase"] = mock_supabase_mod
+from importers.conftest import db_to_file as db_filename
 
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -764,10 +759,4 @@ class TestImportMeasurementGoals:
         assert skipped == 1
 
 
-def db_filename(db):
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    backup = sqlite3.connect(path)
-    db.backup(backup)
-    backup.close()
-    return path
+
