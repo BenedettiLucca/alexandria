@@ -72,6 +72,8 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `capture_brief` — store a structured brief/report artifact
 - `list_briefs` — list/filter recent briefs
 - `search_briefs` — semantic search across stored briefs
+- `extract_brief_claims` — extract structured claims from brief markdown
+- `scan_brief_conflicts` — scan recent briefs for contradictory numeric claims
 
 ### Room Recipes
 - `save_room_recipe` — save/upsert a room recipe by name

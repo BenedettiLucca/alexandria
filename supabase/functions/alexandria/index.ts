@@ -21,6 +21,7 @@ import { registerHealthTools } from "./tools/health.ts";
 import { registerWorkoutsTools } from "./tools/workouts.ts";
 import { registerEntitiesTools } from "./tools/entities.ts";
 import { registerProofChainTools } from "./tools/proof_chain.ts";
+import { registerConflictRadarTools } from "./tools/conflict_radar.ts";
 
 
 const OAUTH_SCOPE = "alexandria.access";
@@ -43,6 +44,7 @@ registerHealthTools(server, getAuth);
 registerWorkoutsTools(server, getAuth);
 registerEntitiesTools(server, getAuth);
 registerProofChainTools(server, getAuth);
+registerConflictRadarTools(server, getAuth);
 
 
 function getProtectedResourceMetadataUrl(): string {
