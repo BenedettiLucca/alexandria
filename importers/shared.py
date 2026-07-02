@@ -125,8 +125,6 @@ def extract_numeric_value(entry_type, value):
                     return round(float(val), 1)
                 if entry_type == "steps":
                     return int(val)
-                if entry_type == "blood_pressure":
-                    return float(val)
                 return float(val)
             except (ValueError, TypeError):
                 return None

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { supabase, AuthContext } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
+import { IGNORED_KEYWORDS } from "../lib.ts";
 import type { BriefRow } from "../types.ts";
 import {
   briefToText,
@@ -416,21 +417,6 @@ const OPPOSING_PAIRS = [
   ["approved", "denied"],
   ["bullish", "bearish"],
 ];
-
-const IGNORED_KEYWORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "been", "have", "has", "had",
-  "is", "will", "would", "shall", "should", "can", "could", "may", "might", "must",
-  "about", "above", "across", "after", "against", "along", "among", "around", "at", "before", "behind", "below", "beneath", "beside",
-  "between", "beyond", "but", "by", "concerning", "considering", "despite", "down", "during", "except", "following",
-  "in", "inside", "into", "like", "minus", "near", "next", "of", "off", "on", "onto", "opposite", "out", "outside", "over", "past",
-  "plus", "regarding", "round", "save", "since", "than", "through", "to", "toward", "towards", "under", "underneath", "unlike",
-  "until", "up", "upon", "versus", "via", "without",
-  "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-  "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december",
-  "mon", "tue", "wed", "thu", "fri", "sat", "sun",
-  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-  "year", "years", "month", "months", "week", "weeks", "day", "days", "hour", "hours", "minute", "minutes", "second", "seconds"
-]);
 
 export function extractNumbers(text: string): { keyword: string; value: number }[] {
   const results: { keyword: string; value: number }[] = [];

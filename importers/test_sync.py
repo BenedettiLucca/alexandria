@@ -27,7 +27,6 @@ _mod = importlib.util.module_from_spec(_spec)
 sys.modules["importers.health_connect.sync"] = _mod
 sys.modules["importers.health_connect"].sync = _mod
 _spec.loader.exec_module(_mod)
-get_credentials = _mod.get_credentials
 _api_get = _mod._api_get
 sync_steps = _mod.sync_steps
 sync_weight = _mod.sync_weight

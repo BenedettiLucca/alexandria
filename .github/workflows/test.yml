@@ -44,4 +44,4 @@ jobs:
           deno-version: v2.x
 
       - name: Run tests
-        run: deno test supabase/functions/alexandria/lib.test.ts --allow-read --allow-env
+        run: deno test --allow-all supabase/functions/alexandria/

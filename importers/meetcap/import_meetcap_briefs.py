@@ -13,8 +13,6 @@ import json
 import hashlib
 from datetime import datetime, timezone
 
-from supabase import create_client
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
     connect_supabase,
