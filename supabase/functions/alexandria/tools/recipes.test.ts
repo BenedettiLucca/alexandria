@@ -110,3 +110,27 @@ Deno.test("Format test - formatRankedManifest contains necessary info", () => {
   assertEquals(output.includes("Excluded by recipe"), true);
   assertEquals(output.includes("Top items:"), true);
 });
+
+Deno.test("Weight rerank test - priority_weights proof_chain boost adjusted score", () => {
+  const today = new Date().toISOString().split("T")[0];
+  const recipe: any = {
+    priority_weights: {
+      proof_chain: { weight: 0.1 },
+    },
+  };
+  const briefs: any[] = [
+    {
+      id: "A",
+      title: "Brief A",
+      kind: "night_research",
+      source_job: "crawler",
+      brief_date: today,
+      body_markdown: "Source: https://example.com/a\nSource: https://example.com/b\nSource: https://example.com/c\n> evidence",
+      similarity: 0.8
+    },
+  ];
+  const ranked = applyRecipeWeights(briefs, recipe);
+  assertEquals(ranked.length, 1);
+  assertEquals(ranked[0].adjusted_score, 9.8);
+});
+

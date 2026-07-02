@@ -79,6 +79,10 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `get_room_recipe` — get recipe details by name
 - `build_room_manifest_from_recipe` — build a room manifest based on a recipe
 
+### Proof Chain
+- `score_brief_provenance` — evaluate provenance quality of a brief
+
+
 ### Profile
 - `get_profile` — retrieve profile sections
 - `set_profile` — create/update profile data

@@ -3,6 +3,8 @@ import { z } from "npm:zod@3.24.1";
 import { supabase } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
 import { BriefMatch } from "./briefs.ts";
+import { computeProofChainScore } from "./proof_chain.ts";
+
 
 export interface RoomRecipe {
   id: string;
@@ -103,6 +105,19 @@ export function applyRecipeWeights(
       const sign = kWeight >= 0 ? "+" : "";
       boosts.push(`kind boost (${brief.kind}: ${sign}${kWeight})`);
     }
+
+    const pcWeights = priorityWeights.proof_chain ?? priorityWeights.proof_chain_score;
+    if (pcWeights !== undefined) {
+      const pcWeight = pcWeights.weight ?? pcWeights.multiplier;
+      if (pcWeight !== undefined) {
+        const pcScore = computeProofChainScore(brief).score;
+        const boost = pcScore * pcWeight;
+        adjustedScore += boost;
+        const sign = boost >= 0 ? "+" : "";
+        boosts.push(`proof_chain boost (score: ${pcScore}, weight: ${pcWeight}: ${sign}${Number(boost.toFixed(4))})`);
+      }
+    }
+
 
     let inclusionReason = `semantic match (${originalSimilarity})`;
     if (boosts.length > 0) {

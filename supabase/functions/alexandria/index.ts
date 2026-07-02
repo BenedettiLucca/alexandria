@@ -20,6 +20,8 @@ import { registerProjectsTools } from "./tools/projects.ts";
 import { registerHealthTools } from "./tools/health.ts";
 import { registerWorkoutsTools } from "./tools/workouts.ts";
 import { registerEntitiesTools } from "./tools/entities.ts";
+import { registerProofChainTools } from "./tools/proof_chain.ts";
+
 
 const OAUTH_SCOPE = "alexandria.access";
 const MCP_PUBLIC_URL = `${SUPABASE_URL}/functions/v1/alexandria`;
@@ -40,6 +42,8 @@ registerProjectsTools(server, getAuth);
 registerHealthTools(server, getAuth);
 registerWorkoutsTools(server, getAuth);
 registerEntitiesTools(server, getAuth);
+registerProofChainTools(server, getAuth);
+
 
 function getProtectedResourceMetadataUrl(): string {
   return `${MCP_PUBLIC_URL}?oauth_metadata=protected_resource`;
