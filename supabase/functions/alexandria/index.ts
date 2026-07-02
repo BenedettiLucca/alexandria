@@ -14,6 +14,7 @@ import {
 
 import { registerMemoriesTools } from "./tools/memories.ts";
 import { registerBriefsTools } from "./tools/briefs.ts";
+import { registerRecipeTools } from "./tools/recipes.ts";
 import { registerProfileTools } from "./tools/profile.ts";
 import { registerProjectsTools } from "./tools/projects.ts";
 import { registerHealthTools } from "./tools/health.ts";
@@ -33,6 +34,7 @@ const getAuth = () => currentAuth;
 
 registerMemoriesTools(server, getAuth);
 registerBriefsTools(server, getAuth);
+registerRecipeTools(server, getAuth);
 registerProfileTools(server, getAuth);
 registerProjectsTools(server, getAuth);
 registerHealthTools(server, getAuth);

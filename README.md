@@ -73,6 +73,12 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `list_briefs` — list/filter recent briefs
 - `search_briefs` — semantic search across stored briefs
 
+### Room Recipes
+- `save_room_recipe` — save/upsert a room recipe by name
+- `list_room_recipes` — list all room recipes
+- `get_room_recipe` — get recipe details by name
+- `build_room_manifest_from_recipe` — build a room manifest based on a recipe
+
 ### Profile
 - `get_profile` — retrieve profile sections
 - `set_profile` — create/update profile data
