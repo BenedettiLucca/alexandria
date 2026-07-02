@@ -43,9 +43,9 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 
 ## Database Schema
 
-`schema/schema.sql` is the canonical schema for fresh installs, and it must stay identical to the consolidated bootstrap migration in `supabase/migrations/*_alexandria_schema.sql`.
+The canonical bootstrap schema for fresh installs lives in `supabase/migrations/20260429160331_alexandria_schema.sql`.
 
-10 tables in a single consolidated [`schema/schema.sql`](schema/schema.sql):
+10 tables in the consolidated bootstrap migration:
 
 | Table | Description |
 |-------|-------------|
@@ -117,7 +117,7 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 
 2. **Create a Supabase project** at [supabase.com](https://supabase.com)
 
-3. **Run the schema** — open SQL Editor and run the contents of `schema/schema.sql`
+3. **Run the bootstrap schema** — open SQL Editor and run `supabase/migrations/20260429160331_alexandria_schema.sql`
 
 4. **Get an OpenRouter API key** at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)
 
@@ -137,8 +137,7 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 ## Testing
 
 ```bash
-./run-tests.sh                                          # Schema drift check + full suite (121 tests)
-python3 scripts/check_schema_drift.py                   # Drift guard only
+./run-tests.sh                                          # Full suite
 deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (48)
 python -m pytest importers/ -v                          # Python tests only (73)
 python -m pytest importers/ -v --cov=importers          # With coverage report
@@ -150,7 +149,6 @@ CI runs automatically on every push to `master` and on pull requests. See the [A
 
 ```
 alexandria/
-├── schema/schema.sql          # Consolidated DB schema
 ├── supabase/
 │   └── functions/
 │       └── alexandria/
@@ -159,6 +157,7 @@ alexandria/
 │           ├── lib.test.ts    # Deno tests (48)
 │           ├── deno.json      # Deno config + imports
 │           └── deno.lock
+├── supabase/migrations/20260429160331_alexandria_schema.sql  # Bootstrap schema
 ├── importers/
 │   ├── shared.py              # Shared utilities
 │   ├── health-connect/        # Google Health Connect importer

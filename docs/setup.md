@@ -10,7 +10,7 @@
 
 Open your Supabase project's SQL Editor (left sidebar → SQL Editor → New query).
 
-Copy the contents of `schema/schema.sql` and click **Run**.
+Copy the contents of `supabase/migrations/20260429160331_alexandria_schema.sql` and click **Run**.
 
 This creates all 9 tables:
 
@@ -144,9 +144,7 @@ bash scripts/deploy.sh
 ```
 
 For database changes:
-1. Update `schema/schema.sql` first (canonical bootstrap schema).
-2. Mirror the exact same change into `supabase/migrations/*_alexandria_schema.sql`.
-3. Run `python3 scripts/check_schema_drift.py`.
-4. If an existing Supabase project needs the delta, create/apply an incremental migration as well.
+1. Update `supabase/migrations/20260429160331_alexandria_schema.sql` when the bootstrap schema itself changes.
+2. If an existing Supabase project needs the delta, create/apply an incremental migration as well.
 
 Schema changes for an already-running Supabase project still need to be applied to that remote database manually or via your migration workflow.
