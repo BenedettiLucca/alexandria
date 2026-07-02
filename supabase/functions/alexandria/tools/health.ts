@@ -10,7 +10,10 @@ import {
   formatDailyHealthSummary,
   formatHealthEntry,
   recordToText,
+  formatCoverageWarnings,
+  formatCoverageReport,
 } from "../lib.ts";
+
 
 export function registerHealthTools(
   server: McpServer,
@@ -228,7 +231,28 @@ export function registerHealthTools(
 
       const lines = data.map((s: any) => formatDailyHealthSummary(s));
 
-      return `${data.length} day(s):\n\n${lines.join("\n\n")}`;
+      let coverageDays = days || 7;
+      if (from) {
+        const fromDate = new Date(from);
+        const toDate = to ? new Date(to) : new Date();
+        const diffMs = toDate.getTime() - fromDate.getTime();
+        coverageDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 1);
+      }
+
+      const { data: covData, error: covError } = await supabase.rpc("compute_source_coverage", {
+        target_days: coverageDays,
+      });
+
+      let warningsText = "";
+      if (!covError && covData) {
+        warningsText = formatCoverageWarnings(covData);
+      }
+
+      const summaryText = `${data.length} day(s):\n\n${lines.join("\n\n")}`;
+      if (warningsText) {
+        return `${summaryText}\n\n${warningsText}`;
+      }
+      return summaryText;
     }),
   );
 
@@ -394,4 +418,27 @@ export function registerHealthTools(
       );
     }),
   );
+
+  server.registerTool(
+    "source_coverage_report",
+    {
+      title: "Source Coverage Report",
+      description:
+        "Get diagnostic source/lane coverage health check. Grouped by status severity.",
+      inputSchema: {
+        days: z.number().optional().default(7).describe(
+          "Number of recent days to evaluate coverage diagnostics",
+        ),
+      },
+    },
+    wrapHandler(async ({ days }) => {
+      const { data, error } = await supabase.rpc("compute_source_coverage", {
+        target_days: days || 7,
+      });
+      if (error) throw new Error(error.message);
+      if (!data) return "No coverage data returned.";
+      return formatCoverageReport(data);
+    }),
+  );
 }
+

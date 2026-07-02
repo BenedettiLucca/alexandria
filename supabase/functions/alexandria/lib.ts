@@ -534,3 +534,82 @@ export function formatBodyCompSummary(
 
   return parts.join("\n");
 }
+
+export function formatCoverageWarnings(rows: any[]): string {
+  const warnings: string[] = [];
+  for (const row of rows) {
+    const status = row.coverage_status;
+    if (status === "current") continue;
+
+    let details = "";
+    if (status === "missing") {
+      details = "no entries seen, workouts recent, no sync log";
+    } else if (status === "never_seen") {
+      details = "no entries seen, no sync log, no summaries";
+    } else if (status === "summary_stale") {
+      details = "summaries exist but lane lacks current entries";
+    } else if (status === "late") {
+      const gap = row.gap_hours != null ? `${row.gap_hours}h ago` : "unknown gap";
+      details = `last seen ${gap}, expected cadence ${row.expected_cadence_hours}h`;
+    } else {
+      details = status;
+    }
+    warnings.push(`- ${row.lane}: ${status} (${details})`);
+  }
+
+  if (warnings.length === 0) return "";
+  return `Coverage warnings:\n${warnings.join("\n")}`;
+}
+
+export function formatCoverageReport(rows: any[]): string {
+  const groups: Record<string, any[]> = {
+    critical: [],
+    warning: [],
+    healthy: [],
+  };
+
+  for (const row of rows) {
+    const status = row.coverage_status;
+    if (status === "missing" || status === "never_seen") {
+      groups.critical.push(row);
+    } else if (status === "late" || status === "summary_stale") {
+      groups.warning.push(row);
+    } else {
+      groups.healthy.push(row);
+    }
+  }
+
+  const sections: string[] = ["Source Coverage Diagnostics Report"];
+
+  if (groups.critical.length > 0) {
+    sections.push("🚨 CRITICAL / MISSING DATA:");
+    for (const r of groups.critical) {
+      sections.push(formatCoverageRow(r));
+    }
+  }
+
+  if (groups.warning.length > 0) {
+    sections.push("⚠️ STALE / LATE DATA:");
+    for (const r of groups.warning) {
+      sections.push(formatCoverageRow(r));
+    }
+  }
+
+  if (groups.healthy.length > 0) {
+    sections.push("✅ CURRENT (HEALTHY):");
+    for (const r of groups.healthy) {
+      sections.push(formatCoverageRow(r));
+    }
+  }
+
+  return sections.join("\n\n");
+}
+
+function formatCoverageRow(r: any): string {
+  const lastEvent = r.last_event_at ? new Date(r.last_event_at).toISOString() : "Never";
+  const lastIngested = r.last_ingested_at ? new Date(r.last_ingested_at).toISOString() : "Never";
+  const gap = r.gap_hours != null ? `${r.gap_hours}h` : "N/A";
+  const notesStr = (r.notes && r.notes.length) ? ` | Notes: ${r.notes.join(", ")}` : "";
+  return `- Lane: ${r.lane} (Source: ${r.source_name})\n  Status: ${r.coverage_status} | Cadence: ${r.expected_cadence_hours}h | Gap: ${gap}\n  Last Event: ${lastEvent} | Ingested: ${lastIngested}${notesStr}`;
+}
+

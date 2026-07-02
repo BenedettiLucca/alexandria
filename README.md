@@ -85,8 +85,10 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 ### Health
 - `log_health` — record a health entry
 - `query_health` — search/filter health data
-- `health_summary` — view daily aggregated summaries
+- `health_summary` — view daily aggregated summaries (includes coverage warnings)
 - `search_health` — semantic search over health entries
+- `source_coverage_report` — diagnostic report on source/lane data ingestion coverage
+
 
 ### Training
 - `log_workout` — record a training session
@@ -170,6 +172,22 @@ alexandria/
 └── .env.example               # Environment template
 ```
 
+## Source Coverage Healthcheck
+
+Alexandria tracks data ingestion coverage to distinguish missing/non-ingested data from true zeros (e.g. knowing whether you walked 0 steps vs. the steps data was not synchronized).
+
+### Coverage Statuses
+- `current`: Data is up to date and within the expected cadence.
+- `late`: Data has been imported before, but the gap since the last entry exceeds the expected cadence.
+- `summary_stale`: Health summaries exist, but the lane lacks current entries.
+- `missing`: Workouts are recent, but daily lanes (sleep, steps) are absent and no completed sync evidence exists.
+- `never_seen`: No entries exist and there is no sync or summary evidence.
+
+### Diagnostic Tools and Warnings
+- Use the `source_coverage_report` tool to get a full report of ingestion status and gaps across all lanes (`workouts`, `sleep`, `steps`, `heart_rate`, `weight`), grouped by status severity.
+- The `health_summary` tool automatically appends a `Coverage warnings:` block when any lanes are missing or stale, ensuring operators are immediately aware of ingestion health issues.
+
 ## License
 
 MIT
+
