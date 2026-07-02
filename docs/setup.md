@@ -12,11 +12,12 @@ Open your Supabase project's SQL Editor (left sidebar → SQL Editor → New que
 
 Copy the contents of `supabase/migrations/20260429160331_alexandria_schema.sql` and click **Run**.
 
-This creates all 9 tables:
+This creates 12 tables:
 
 | Table | Purpose |
 |-------|---------|
 | `memories` | Notes, ideas, decisions, observations |
+| `briefs` | Structured markdown artifacts from cron/jobs with dedupe + semantic recall |
 | `projects` | Codebase context, architecture, conventions |
 | `profile` | User preferences, dev stack, environment |
 | `health_entries` | Health data (sleep, exercise, vitals, body composition) |
@@ -25,8 +26,12 @@ This creates all 9 tables:
 | `entities` | Knowledge graph entities (people, concepts, tools) |
 | `entity_mentions` | Links entities to memories |
 | `sync_log` | Import sync state tracking |
+| `room_recipes` | Saved room recipes with authority weights and exclusion rules |
+| `brief_claims` | Structured claims extracted from briefs for conflict detection |
 
-Plus indexes, functions (vector search, dedup, daily summary computation), triggers, and row-level security policies.
+Plus indexes, functions (vector search, dedup, daily summary computation, source coverage), triggers, and row-level security policies.
+
+Run the incremental migrations in `supabase/migrations/` to add room recipes, source coverage, and conflict radar features.
 
 ## Step 2: Get Your Credentials
 

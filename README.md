@@ -8,7 +8,7 @@ Named after the Library of Alexandria — a single repository holding all knowle
 
 ## Features
 
-- **28 MCP tools** for memories, briefs, projects, health, training, and knowledge graph
+- **38 MCP tools** for memories, briefs, room manifests, recipes, brief quality, health, training, and knowledge graph
 - **Semantic search** with pgvector (HNSW indexes)
 - **Auto-classification and embedding** via OpenRouter (GPT-4o-mini + text-embedding-3-small)
 - **Knowledge graph** with entity extraction from memories
@@ -16,7 +16,7 @@ Named after the Library of Alexandria — a single repository holding all knowle
 - **OAuth2 sync** for Google Health API
 - **Derived health summaries** (daily aggregations via SQL RPC)
 - **Row-level security** locked to `service_role`
-- **121 tests** (73 Python + 48 Deno)
+- **201 tests** (96 Python + 105 Deno)
 
 ## Architecture
 
@@ -45,7 +45,7 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 
 The canonical bootstrap schema for fresh installs lives in `supabase/migrations/20260429160331_alexandria_schema.sql`.
 
-10 tables in the consolidated bootstrap migration:
+12 tables across the bootstrap + incremental migrations:
 
 | Table | Description |
 |-------|-------------|
@@ -59,6 +59,8 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 | `entities` | Knowledge graph entities (people, concepts, tools) |
 | `entity_mentions` | Links entities to memories |
 | `sync_log` | Import sync state tracking |
+| `room_recipes` | Saved room recipes with authority weights and exclusion rules |
+| `brief_claims` | Structured claims extracted from briefs for conflict detection |
 
 ## MCP Tools
 
@@ -75,6 +77,9 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `extract_brief_claims` — extract structured claims from brief markdown
 - `scan_brief_conflicts` — scan recent briefs for contradictory numeric claims
 
+### Room Manifests
+- `build_room_manifest` — generate a structured manifest for a draft room based on topic queries and filters
+
 ### Room Recipes
 - `save_room_recipe` — save/upsert a room recipe by name
 - `list_room_recipes` — list all room recipes
@@ -82,8 +87,7 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `build_room_manifest_from_recipe` — build a room manifest based on a recipe
 
 ### Proof Chain
-- `score_brief_provenance` — evaluate provenance quality of a brief
-
+- `score_brief_provenance` — evaluate provenance quality of a brief (heuristic 0-100 score)
 
 ### Profile
 - `get_profile` — retrieve profile sections
@@ -108,7 +112,7 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `search_training` — semantic search over training logs
 
 ### Knowledge Graph
-- `add_entity` — create a knowledge graph entity
+- `add_entity` — create a knowledge graph entity (auto-extracts on memory capture)
 - `get_entity` — get entity details and related memories
 - `list_entities` — browse all entities
 - `search_entities` — search entities by name
@@ -150,8 +154,8 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 
 ```bash
 ./run-tests.sh                                          # Full suite
-deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (48)
-python -m pytest importers/ -v                          # Python tests only (73)
+deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (105)
+python -m pytest importers/ -v                          # Python tests only (96)
 python -m pytest importers/ -v --cov=importers          # With coverage report
 ```
 
@@ -162,23 +166,38 @@ CI runs automatically on every push to `master` and on pull requests. See the [A
 ```
 alexandria/
 ├── supabase/
+│   ├── migrations/
+│   │   ├── 20260429160331_alexandria_schema.sql  # Bootstrap schema (12 tables)
+│   │   ├── 20260702010000_add_compute_source_coverage.sql
+│   │   ├── 20260702020000_add_room_recipes.sql
+│   │   └── 20260702030000_add_brief_claims.sql
 │   └── functions/
 │       └── alexandria/
-│           ├── index.ts       # MCP server (25 tools)
+│           ├── index.ts       # MCP server (38 tools)
 │           ├── lib.ts         # Pure functions
-│           ├── lib.test.ts    # Deno tests (48)
+│           ├── lib.test.ts    # Deno tests (47)
 │           ├── deno.json      # Deno config + imports
-│           └── deno.lock
-├── supabase/migrations/20260429160331_alexandria_schema.sql  # Bootstrap schema
+│           ├── deno.lock
+│           └── tools/
+│               ├── briefs.ts          # capture, list, search, build_room_manifest
+│               ├── memories.ts        # search, capture, list, stats, update, delete
+│               ├── health.ts          # log, query, summary, search, coverage, bodycomp
+│               ├── workouts.ts        # log, query, search training
+│               ├── projects.ts        # list, get, save
+│               ├── profile.ts         # get, set
+│               ├── entities.ts        # add, get, list, search, mentions, top
+│               ├── recipes.ts         # save, list, get, build_from_recipe
+│               ├── proof_chain.ts     # score_brief_provenance
+│               ├── conflict_radar.ts  # extract_claims, scan_conflicts
+│               └── *.test.ts          # 58 tool-level Deno tests
 ├── importers/
 │   ├── shared.py              # Shared utilities
 │   ├── health-connect/        # Google Health Connect importer
 │   ├── iron-log/              # Iron Log workout importer
-│   └── test_*.py              # Python tests (73)
+│   └── test_*.py              # Python tests (96)
 ├── docs/
 │   ├── setup.md               # Detailed setup guide
-│   ├── clients.md             # AI client connection guide
-│   └── plan.md                # Architecture & improvement plan
+│   └── clients.md             # AI client connection guide
 ├── scripts/deploy.sh          # One-command deploy
 └── .env.example               # Environment template
 ```
