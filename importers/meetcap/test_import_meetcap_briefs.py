@@ -144,7 +144,7 @@ participants: ["Alice"]
             mock_response_empty.data = []
             
             # Default behavior: not exists in query_1 or query_2
-            mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = mock_response_empty
+            mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_response_empty
             mock_supabase.table.return_value.select.return_value.eq.return_value.filter.return_value.maybe_single.return_value.execute.return_value = mock_response_empty
             
             # Execute first import (insert new record)
@@ -164,7 +164,7 @@ participants: ["Alice"]
             mock_response_exists.data = [{"id": "uuid-123", "content_hash": "some-hash"}]
             
             # Setup query_1 (by hash) to return exists
-            mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = mock_response_exists
+            mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_response_exists
             
             # Execute second import (exact duplicate by hash)
             imported, skipped, failed = import_meetcap_briefs(tmpdir, mock_supabase)
@@ -178,7 +178,7 @@ participants: ["Alice"]
             mock_supabase.reset_mock()
 
             # Setup query_1 (by hash) to return empty
-            mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = mock_response_empty
+            mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_response_empty
             # Setup query_2 (by path) to return existing (content changed but path exists)
             mock_supabase.table.return_value.select.return_value.eq.return_value.filter.return_value.maybe_single.return_value.execute.return_value = mock_response_exists
             

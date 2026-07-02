@@ -97,6 +97,11 @@ def import_records(conn, supabase, config, stats=None):
             if ts_raw is None:
                 continue
 
+            # Optional filter: skip rows that don't have relevant data
+            filter_fn = config.get("filter_fn")
+            if filter_fn and not filter_fn(rec):
+                continue
+
             ts = format_timestamp(ts_raw)
             external_id = config["build_external_id"](rec)
 
@@ -294,102 +299,73 @@ BLOOD_PRESSURE_CONFIG = {
 }
 
 
-def import_nutrition(conn, supabase, stats=None):
-    tables = [
-        t
-        for t in list_tables(conn)
-        if any(kw in t.lower() for kw in ["nutrition", "water", "hydration"])
-    ]
-    imported = 0
-    skipped = 0
+WATER_CONFIG = {
+    "table_keywords": ["nutrition", "water", "hydration"],
+    "entry_type": "water",
+    "tags": ["water"],
+    "label": "Water",
+    "build_value": lambda r: {
+        "volume_ml": float(
+            r.get("volume") or r.get("water") or r.get("hydration") or 0
+        )
+    },
+    "build_external_id": lambda r: sha256(
+        f"hc-water-{r.get('start_time') or r.get('time')}".encode()
+    ).hexdigest(),
+    "get_timestamp": lambda r: r.get("start_time") or r.get("time"),
+    "extract_numeric": lambda r, v: float(
+        r.get("volume") or r.get("water") or r.get("hydration") or 0
+    ),
+    "filter_fn": lambda r: bool(
+        r.get("volume") or r.get("water") or r.get("hydration")
+    ),
+}
 
-    for table in tables:
-        try:
-            rows = conn.execute(f"SELECT * FROM [{table}]").fetchall()
-            cols = [
-                d[0].lower()
-                for d in conn.execute(f"SELECT * FROM [{table}] LIMIT 0").description
+NUTRITION_CONFIG = {
+    "table_keywords": ["nutrition", "water", "hydration"],
+    "entry_type": "nutrition",
+    "tags": ["nutrition"],
+    "label": "Nutrition",
+    "build_value": lambda r: {
+        **{"energy_kcal": float(r.get("energy") or r.get("calories") or r.get("energy_total"))},
+        **{
+            f: float(r[f])
+            for f in [
+                "protein",
+                "fat_total",
+                "carbs_total",
+                "fiber",
+                "sugar",
+                "sodium",
+                "caffeine",
             ]
-        except sqlite3.DatabaseError as e:
-            print(f"  Skipping {table}: {e}")
-            logger.warning(f"Error reading nutrition table {table}", exc_info=True)
-            if stats is not None:
-                stats["failed_tables"] = stats.get("failed_tables", 0) + 1
-            continue
+            if r.get(f)
+        },
+    },
+    "build_external_id": lambda r: sha256(
+        f"hc-nutrition-{r.get('start_time') or r.get('time')}".encode()
+    ).hexdigest(),
+    "get_timestamp": lambda r: r.get("start_time") or r.get("time"),
+    "extract_numeric": lambda r, v: float(
+        r.get("energy") or r.get("calories") or r.get("energy_total")
+    ),
+    "filter_fn": lambda r: bool(
+        r.get("energy") or r.get("calories") or r.get("energy_total")
+    ),
+}
 
-        for row in rows:
-            rec = dict(zip(cols, row))
-            ts_raw = rec.get("start_time") or rec.get("time")
-            if not ts_raw:
-                continue
-            ts = format_timestamp(ts_raw)
 
-            volume = rec.get("volume") or rec.get("water") or rec.get("hydration")
-            if volume:
-                fp = sha256(f"hc-water-{ts_raw}".encode()).hexdigest()
-                if dedup_by_external_id(
-                    supabase, "health_entries", "health-connect", fp
-                ):
-                    skipped += 1
-                else:
-                    upsert_record(
-                        supabase,
-                        "health_entries",
-                        {
-                            "entry_type": "water",
-                            "timestamp": ts,
-                            "numeric_value": float(volume),
-                            "value": {"volume_ml": float(volume)},
-                            "source": "health-connect",
-                            "external_id": fp,
-                            "tags": ["health-connect", "water"],
-                            "metadata": {"import_fingerprint": fp},
-                        },
-                        "health-connect",
-                        fp,
-                    )
-                    imported += 1
+def import_nutrition(conn, supabase, stats=None):
+    """Import nutrition and water data using consolidated import_records."""
+    total_imported = 0
+    total_skipped = 0
+    for config in (WATER_CONFIG, NUTRITION_CONFIG):
+        imp, skp = import_records(conn, supabase, config, stats=stats)
+        total_imported += imp
+        total_skipped += skp
 
-            energy = rec.get("energy") or rec.get("calories") or rec.get("energy_total")
-            if energy:
-                fp = sha256(f"hc-nutrition-{ts_raw}".encode()).hexdigest()
-                if dedup_by_external_id(
-                    supabase, "health_entries", "health-connect", fp
-                ):
-                    skipped += 1
-                else:
-                    value = {"energy_kcal": float(energy)}
-                    for field in [
-                        "protein",
-                        "fat_total",
-                        "carbs_total",
-                        "fiber",
-                        "sugar",
-                        "sodium",
-                        "caffeine",
-                    ]:
-                        if rec.get(field):
-                            value[field] = float(rec[field])
-                    upsert_record(
-                        supabase,
-                        "health_entries",
-                        {
-                            "entry_type": "nutrition",
-                            "timestamp": ts,
-                            "numeric_value": float(energy),
-                            "value": value,
-                            "source": "health-connect",
-                            "external_id": fp,
-                            "tags": ["health-connect", "nutrition"],
-                            "metadata": {"import_fingerprint": fp},
-                        },
-                        "health-connect",
-                        fp,
-                    )
-                    imported += 1
-
-    print(f"  Nutrition/Water: {imported} entries imported, {skipped} skipped")
-    return imported, skipped
+    print(f"  Nutrition/Water: {total_imported} entries imported, {total_skipped} skipped")
+    return total_imported, total_skipped
 
 
 def main():

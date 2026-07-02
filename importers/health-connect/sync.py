@@ -55,6 +55,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+MILLIS_PER_DAY = 86_400_000
+FIT_API_BASE = "https://www.googleapis.com/fitness/v1/users/me"
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
     connect_supabase,
@@ -139,15 +142,54 @@ def _api_get(creds, url, method="GET", body=None):
         return None
 
 
-def sync_steps(creds, supabase, start_ms, end_ms):
-    """Sync daily step counts."""
+AGGREGATE_CONFIGS = {
+    "steps": {
+        "data_type_name": "com.google.step_count.delta",
+        "entry_type": "steps",
+        "id_prefix": "ghc-steps",
+        "fingerprint_prefix": "ghc-steps",
+        "tags": ["health-connect", "steps"],
+        "label": "Steps",
+        "value_key": "intVal",
+        "value_field": "count",
+        "round": None,
+    },
+    "weight": {
+        "data_type_name": "com.google.weight",
+        "entry_type": "weight",
+        "id_prefix": "ghc-weight",
+        "fingerprint_prefix": "ghc-weight",
+        "tags": ["health-connect", "weight"],
+        "label": "Weight",
+        "value_key": "fpVal",
+        "value_field": "weight_kg",
+        "round": 2,
+    },
+    "heart_rate": {
+        "data_type_name": "com.google.heart_rate.bpm",
+        "entry_type": "heart_rate",
+        "id_prefix": "ghc-heart_rate",
+        "fingerprint_prefix": "ghc-hr",
+        "tags": ["health-connect", "heart-rate"],
+        "label": "Heart rate",
+        "value_key": "fpVal",
+        "value_field": "bpm",
+        "round": 0,
+    },
+}
+
+
+def sync_aggregate(creds, supabase, start_ms, end_ms, config_name):
+    """Generic sync for Google Fit aggregate endpoints (steps, weight, heart_rate)."""
+    cfg = AGGREGATE_CONFIGS[config_name]
+
     data = _api_get(
         creds,
-        "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
+        f"{FIT_API_BASE}/dataset:aggregate",
         method="POST",
         body=json.dumps({
-            "aggregateBy": [{"dataTypeName": "com.google.step_count.delta"}],
-            "bucketByTime": {"durationMillis": 86400000},
+            "aggregateBy": [{"dataTypeName": cfg["data_type_name"]}],
+            "bucketByTime": {"durationMillis": MILLIS_PER_DAY},
             "startTimeMillis": str(start_ms),
             "endTimeMillis": str(end_ms),
         }),
@@ -161,35 +203,47 @@ def sync_steps(creds, supabase, start_ms, end_ms):
         for dataset in bucket.get("dataset", []):
             for point in dataset.get("point", []):
                 start = int(point.get("startTimeNanos", 0)) // 1_000_000
-                count = 0
+                raw_val = None
                 for val in point.get("value", []):
-                    count = val.get("intVal", 0)
+                    raw_val = val.get(cfg["value_key"])
 
-                if not count or not start:
+                if not raw_val or not start:
                     continue
 
-                date_str = format_date(start)
-                external_id = f"ghc-steps-{start}"
+                if cfg["round"] is not None:
+                    raw_val = round(float(raw_val), cfg["round"])
+                else:
+                    raw_val = int(raw_val)
+
+                external_id = f"{cfg['id_prefix']}-{start}"
                 if dedup_by_external_id(
                     supabase, "health_entries", "health-connect", external_id
                 ):
                     skipped += 1
                     continue
 
-                fingerprint = sha256(f"ghc-steps-{date_str}".encode()).hexdigest()
-                value = {"count": count}
+                if cfg["fingerprint_prefix"] == "ghc-steps":
+                    fingerprint = sha256(
+                        f"{cfg['fingerprint_prefix']}-{format_date(start)}".encode()
+                    ).hexdigest()
+                else:
+                    fingerprint = sha256(
+                        f"{cfg['fingerprint_prefix']}-{start}".encode()
+                    ).hexdigest()
+
+                value = {cfg["value_field"]: raw_val}
 
                 upsert_record(
                     supabase,
                     "health_entries",
                     {
-                        "entry_type": "steps",
+                        "entry_type": cfg["entry_type"],
                         "timestamp": format_timestamp(start),
-                        "numeric_value": count,
+                        "numeric_value": raw_val,
                         "value": value,
                         "source": "health-connect",
                         "external_id": external_id,
-                        "tags": ["health-connect", "steps"],
+                        "tags": cfg["tags"],
                         "metadata": {"import_fingerprint": fingerprint},
                     },
                     "health-connect",
@@ -197,139 +251,30 @@ def sync_steps(creds, supabase, start_ms, end_ms):
                 )
                 imported += 1
 
-    print(f"  Steps: {imported} imported, {skipped} skipped")
+    print(f"  {cfg['label']}: {imported} imported, {skipped} skipped")
     return imported, skipped
+
+
+def sync_steps(creds, supabase, start_ms, end_ms):
+    """Sync daily step counts."""
+    return sync_aggregate(creds, supabase, start_ms, end_ms, "steps")
 
 
 def sync_weight(creds, supabase, start_ms, end_ms):
     """Sync weight measurements."""
-    data = _api_get(
-        creds,
-        "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
-        method="POST",
-        body=json.dumps({
-            "aggregateBy": [{"dataTypeName": "com.google.weight"}],
-            "bucketByTime": {"durationMillis": 86400000},
-            "startTimeMillis": str(start_ms),
-            "endTimeMillis": str(end_ms),
-        }),
-    )
-    if not data:
-        return 0, 0
-
-    imported = 0
-    skipped = 0
-    for bucket in data.get("bucket", []):
-        for dataset in bucket.get("dataset", []):
-            for point in dataset.get("point", []):
-                start = int(point.get("startTimeNanos", 0)) // 1_000_000
-                weight = None
-                for val in point.get("value", []):
-                    weight = val.get("fpVal")
-
-                if not weight or not start:
-                    continue
-
-                external_id = f"ghc-weight-{start}"
-                if dedup_by_external_id(
-                    supabase, "health_entries", "health-connect", external_id
-                ):
-                    skipped += 1
-                    continue
-
-                fingerprint = sha256(f"ghc-weight-{start}".encode()).hexdigest()
-                weight_kg = round(float(weight), 2)
-                value = {"weight_kg": weight_kg}
-
-                upsert_record(
-                    supabase,
-                    "health_entries",
-                    {
-                        "entry_type": "weight",
-                        "timestamp": format_timestamp(start),
-                        "numeric_value": weight_kg,
-                        "value": value,
-                        "source": "health-connect",
-                        "external_id": external_id,
-                        "tags": ["health-connect", "weight"],
-                        "metadata": {"import_fingerprint": fingerprint},
-                    },
-                    "health-connect",
-                    external_id,
-                )
-                imported += 1
-
-    print(f"  Weight: {imported} imported, {skipped} skipped")
-    return imported, skipped
+    return sync_aggregate(creds, supabase, start_ms, end_ms, "weight")
 
 
 def sync_heart_rate(creds, supabase, start_ms, end_ms):
     """Sync heart rate samples."""
-    data = _api_get(
-        creds,
-        "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate",
-        method="POST",
-        body=json.dumps({
-            "aggregateBy": [{"dataTypeName": "com.google.heart_rate.bpm"}],
-            "bucketByTime": {"durationMillis": 86400000},
-            "startTimeMillis": str(start_ms),
-            "endTimeMillis": str(end_ms),
-        }),
-    )
-    if not data:
-        return 0, 0
-
-    imported = 0
-    skipped = 0
-    for bucket in data.get("bucket", []):
-        for dataset in bucket.get("dataset", []):
-            for point in dataset.get("point", []):
-                start = int(point.get("startTimeNanos", 0)) // 1_000_000
-                bpm = None
-                for val in point.get("value", []):
-                    bpm = val.get("fpVal")
-
-                if not bpm or not start:
-                    continue
-
-                external_id = f"ghc-heart_rate-{start}"
-                if dedup_by_external_id(
-                    supabase, "health_entries", "health-connect", external_id
-                ):
-                    skipped += 1
-                    continue
-
-                fingerprint = sha256(f"ghc-hr-{start}".encode()).hexdigest()
-                bpm_rounded = round(float(bpm))
-                value = {"bpm": bpm_rounded}
-
-                upsert_record(
-                    supabase,
-                    "health_entries",
-                    {
-                        "entry_type": "heart_rate",
-                        "timestamp": format_timestamp(start),
-                        "numeric_value": bpm_rounded,
-                        "value": value,
-                        "source": "health-connect",
-                        "external_id": external_id,
-                        "tags": ["health-connect", "heart-rate"],
-                        "metadata": {"import_fingerprint": fingerprint},
-                    },
-                    "health-connect",
-                    external_id,
-                )
-                imported += 1
-
-    print(f"  Heart rate: {imported} imported, {skipped} skipped")
-    return imported, skipped
+    return sync_aggregate(creds, supabase, start_ms, end_ms, "heart_rate")
 
 
 def sync_sleep(creds, supabase, start_ms, end_ms):
     """Sync sleep sessions."""
     start_iso = format_timestamp(start_ms)
     end_iso = format_timestamp(end_ms)
-    url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}&activityType=72"
+    url = f"{FIT_API_BASE}/sessions?startTime={start_iso}&endTime={end_iso}&activityType=72"
     data = _api_get(creds, url)
     if not data:
         return 0, 0
@@ -384,7 +329,7 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
     """Sync exercise sessions."""
     start_iso = format_timestamp(start_ms)
     end_iso = format_timestamp(end_ms)
-    url = f"https://www.googleapis.com/fitness/v1/users/me/sessions?startTime={start_iso}&endTime={end_iso}"
+    url = f"{FIT_API_BASE}/sessions?startTime={start_iso}&endTime={end_iso}"
     data = _api_get(creds, url)
     if not data:
         return 0, 0

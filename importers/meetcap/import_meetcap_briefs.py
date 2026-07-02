@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
     connect_supabase,
+    dedup_by_external_id,
+    upsert_record,
     record_sync,
 )
 
@@ -279,31 +281,30 @@ def import_meetcap_briefs(vault_dir, supabase):
             
             note_path = parsed["canonical_vault_path"]
             
-            # Query by content hash
-            query_1 = supabase.table("briefs").select("id, content_hash").eq("source_job", "meetcap").eq("content_hash", content_hash)
-            existing = query_1.maybe_single().execute()
-            
-            existing_data = existing.data
-            if isinstance(existing_data, list) and existing_data:
-                existing_data = existing_data[0]
-            elif not isinstance(existing_data, dict):
-                existing_data = None
-                
-            if existing_data:
+            # Dedup by content_hash as external_id
+            if dedup_by_external_id(supabase, "briefs", "meetcap", content_hash):
                 skipped += 1
                 continue
-                
-            # Query by path to check if same file has updated content
-            query_2 = supabase.table("briefs").select("id, content_hash").eq("source_job", "meetcap").filter("metadata->>note_path", "eq", note_path)
-            existing_by_path = query_2.maybe_single().execute()
+            
+            # Check by note_path for content updates (same path, different hash)
+            existing_by_path = (
+                supabase.table("briefs")
+                .select("id, content_hash")
+                .eq("source_job", "meetcap")
+                .filter("metadata->>note_path", "eq", note_path)
+                .maybe_single()
+                .execute()
+            )
             
             existing_by_path_data = existing_by_path.data
             if isinstance(existing_by_path_data, list) and existing_by_path_data:
                 existing_by_path_data = existing_by_path_data[0]
             elif not isinstance(existing_by_path_data, dict):
                 existing_by_path_data = None
-                
+            
             record = {
+                "source": "meetcap",
+                "external_id": content_hash,
                 "source_job": "meetcap",
                 "title": parsed["title"],
                 "brief_date": parsed["date"],
@@ -322,11 +323,11 @@ def import_meetcap_briefs(vault_dir, supabase):
             }
             
             if existing_by_path_data:
-                # Content changed — update
+                # Content changed — update by path
                 supabase.table("briefs").update(record).eq("id", existing_by_path_data["id"]).execute()
             else:
-                # New record
-                supabase.table("briefs").insert(record).execute()
+                # New record — insert
+                upsert_record(supabase, "briefs", record, "meetcap", content_hash)
                 
             imported += 1
             print(f"  Imported: {parsed['date']} - {parsed['title']}")
