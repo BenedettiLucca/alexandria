@@ -9,6 +9,14 @@ https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria
 Authentication via header: `x-brain-key: YOUR_MCP_ACCESS_KEY`
 Or via query param: `?key=YOUR_MCP_ACCESS_KEY`
 
+### Optional: label your calls with a client name
+
+Set an `x-alexandria-client` header to attribute every tool call to a named client in `get_tool_activation_report`. If absent, the server falls back to the `User-Agent` header, then `unknown`.
+
+```
+x-alexandria-client: my-agent
+```
+
 ---
 
 ## Hermes Agent
@@ -21,6 +29,7 @@ mcp_servers:
     url: "https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria"
     headers:
       x-brain-key: "YOUR_MCP_ACCESS_KEY"
+      x-alexandria-client: "hermes"
 ```
 
 Then restart Hermes. Tools appear as `mcp_alexandria_*`.
@@ -41,7 +50,8 @@ Windows: `%APPDATA%\Claude\claude_desktop_config.json`
     "alexandria": {
       "url": "https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria",
       "headers": {
-        "x-brain-key": "YOUR_MCP_ACCESS_KEY"
+        "x-brain-key": "YOUR_MCP_ACCESS_KEY",
+        "x-alexandria-client": "claude"
       }
     }
   }
@@ -53,7 +63,7 @@ Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 Settings → MCP → Add new server:
 - **Type:** Streamable HTTP
 - **URL:** `https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria`
-- **Header:** `x-brain-key: YOUR_MCP_ACCESS_KEY`
+- **Header:** `x-brain-key: YOUR_MCP_ACCESS_KEY`, `x-alexandria-client: cursor`
 
 ## ChatGPT / OpenAI
 
@@ -89,3 +99,4 @@ The server uses standard Streamable HTTP transport. Connection params:
 | URL | `https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria` |
 | Auth header | `x-brain-key: YOUR_MCP_ACCESS_KEY` |
 | Auth query param | `?key=YOUR_MCP_ACCESS_KEY` |
+| Client label header (optional) | `x-alexandria-client: your-client-name` |

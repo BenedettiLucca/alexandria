@@ -28,10 +28,19 @@ This creates 12 tables:
 | `sync_log` | Import sync state tracking |
 | `room_recipes` | Saved room recipes with authority weights and exclusion rules |
 | `brief_claims` | Structured claims extracted from briefs for conflict detection |
+| `coverage_snapshots` | Point-in-time source coverage captures for transition tracking |
+| `tool_call_log` | Append-only log of every MCP tool invocation |
+| `tool_catalog` | Registered MCP tool names (enables never-called classification) |
 
-Plus indexes, functions (vector search, dedup, daily summary computation, source coverage), triggers, and row-level security policies.
+Plus indexes, functions (vector search, dedup, daily summary computation, source coverage, coverage transitions, tool activation reporting), triggers, and row-level security policies.
 
-Run the incremental migrations in `supabase/migrations/` to add room recipes, source coverage, and conflict radar features.
+Run the incremental migrations in `supabase/migrations/` to add room recipes, source coverage, conflict radar, coverage transitions, and tool telemetry features. The easiest path is to apply them all with the Supabase CLI:
+
+```bash
+npx supabase db push
+```
+
+or use `npx supabase db reset` against a local dev database to validate the full migration chain from scratch.
 
 ## Step 2: Get Your Credentials
 
@@ -92,6 +101,16 @@ This:
 2. Links to your project
 3. Deploys the Edge Function
 4. Sets all secrets
+5. Deploys the scheduled `coverage-capture` Edge Function
+
+After deploy, schedule `coverage-capture` to run nightly (it snapshots coverage lanes into `coverage_snapshots` so `coverage_transition_report` can detect NEW/ONGOING/RECOVERED transitions). In the Supabase dashboard: **Database → Edge Functions → coverage-capture → Cron/Schedule**, or use `pg_cron`:
+
+```sql
+-- nightly 02:00 capture + 90-day telemetry prune (run daily 03:00)
+SELECT cron.schedule('coverage-capture', '0 2 * * *', 'select net.http_post(url: ''https://<ref>.supabase.co/functions/v1/coverage-capture'')');
+```
+
+Tool telemetry is always-on; 90-day pruning is available via the `prune_tool_call_log(90)` SQL function (invoke it from a scheduled job or cron alongside the above).
 
 ## Step 5: Verify
 

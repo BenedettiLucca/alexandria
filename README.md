@@ -8,15 +8,17 @@ Named after the Library of Alexandria — a single repository holding all knowle
 
 ## Features
 
-- **38 MCP tools** for memories, briefs, room manifests, recipes, brief quality, health, training, and knowledge graph
+- **40 MCP tools** for memories, briefs, room manifests, recipes, brief quality, health, training, and knowledge graph
 - **Semantic search** with pgvector (HNSW indexes)
 - **Auto-classification and embedding** via OpenRouter (GPT-4o-mini + text-embedding-3-small)
 - **Knowledge graph** with entity extraction from memories
 - **Health data importers** (Google Health Connect, Iron Log)
 - **OAuth2 sync** for Google Health API
 - **Derived health summaries** (daily aggregations via SQL RPC)
+- **Source coverage tracking** (distinguishes missing data from true zeros) with transition snapshots and recovery reporting
+- **Tool activation telemetry** (which MCP tools are actually called, by which client, with trends over 7/30/90-day windows)
 - **Row-level security** locked to `service_role`
-- **201 tests** (96 Python + 105 Deno)
+- **213 tests** (96 Python + 117 Deno)
 
 ## Architecture
 
@@ -61,6 +63,9 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 | `sync_log` | Import sync state tracking |
 | `room_recipes` | Saved room recipes with authority weights and exclusion rules |
 | `brief_claims` | Structured claims extracted from briefs for conflict detection |
+| `coverage_snapshots` | Point-in-time source coverage captures for transition tracking |
+| `tool_call_log` | Append-only log of every MCP tool invocation |
+| `tool_catalog` | Registered MCP tool names (enables never-called classification) |
 
 ## MCP Tools
 
@@ -69,6 +74,8 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 - `capture_memory` — save a new memory (auto-embeds + classifies)
 - `list_memories` — list/filter recent memories
 - `memory_stats` — summary statistics
+- `update_memory` — edit a memory (re-embeds + re-classifies when content changes)
+- `delete_memory` — remove a memory
 
 ### Briefs
 - `capture_brief` — store a structured brief/report artifact
@@ -92,36 +99,39 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 ### Profile
 - `get_profile` — retrieve profile sections
 - `set_profile` — create/update profile data
+- `whoami` — return the current authenticated identity
 
 ### Projects
 - `list_projects` — list tracked projects
-- `get_project` — get project details
 - `save_project` — create/update project context
 
 ### Health
 - `log_health` — record a health entry
 - `query_health` — search/filter health data
-- `health_summary` — view daily aggregated summaries (includes coverage warnings)
 - `search_health` — semantic search over health entries
+- `health_summary` — view daily aggregated summaries (includes coverage warnings)
+- `refresh_summary` — recompute daily summary aggregations
+- `delete_health_entry` — remove a health entry
+- `bodycomp_summary` — body composition trends vs measurement goals
 - `source_coverage_report` — diagnostic report on source/lane data ingestion coverage
-
+- `coverage_transition_report` — NEW/ONGOING/RECOVERED state transitions across coverage lanes
 
 ### Training
 - `log_workout` — record a training session
 - `query_workouts` — search/filter workout history
-- `search_training` — semantic search over training logs
+- `search_workouts` — semantic search over training logs
+- `update_workout` — edit a workout
 
 ### Knowledge Graph
-- `add_entity` — create a knowledge graph entity (auto-extracts on memory capture)
+- `search_entities` — search entities by name
 - `get_entity` — get entity details and related memories
 - `list_entities` — browse all entities
-- `search_entities` — search entities by name
-- `get_entity_mentions` — get mentions for an entity
-- `search_mentions` — search entity mentions
-- `top_entities` — most-connected entities
 
 ### Sync
 - `sync_status` — view import sync history
+
+### Telemetry
+- `get_tool_activation_report` — which MCP tools are being called, by which client, and trends over 7/30/90-day windows
 
 ## Quick Start
 
@@ -154,7 +164,7 @@ The canonical bootstrap schema for fresh installs lives in `supabase/migrations/
 
 ```bash
 ./run-tests.sh                                          # Full suite
-deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (105)
+deno test supabase/functions/alexandria/ --allow-all    # Deno tests only (117)
 python -m pytest importers/ -v                          # Python tests only (96)
 python -m pytest importers/ -v --cov=importers          # With coverage report
 ```
@@ -170,26 +180,32 @@ alexandria/
 │   │   ├── 20260429160331_alexandria_schema.sql  # Bootstrap schema (12 tables)
 │   │   ├── 20260702010000_add_compute_source_coverage.sql
 │   │   ├── 20260702020000_add_room_recipes.sql
-│   │   └── 20260702030000_add_brief_claims.sql
+│   │   ├── 20260702030000_add_brief_claims.sql
+│   │   ├── 20260814010000_add_coverage_transitions.sql
+│   │   └── 20260815010000_add_tool_telemetry.sql
 │   └── functions/
-│       └── alexandria/
-│           ├── index.ts       # MCP server (38 tools)
-│           ├── lib.ts         # Pure functions
-│           ├── lib.test.ts    # Deno tests (47)
-│           ├── deno.json      # Deno config + imports
-│           ├── deno.lock
-│           └── tools/
-│               ├── briefs.ts          # capture, list, search, build_room_manifest
-│               ├── memories.ts        # search, capture, list, stats, update, delete
-│               ├── health.ts          # log, query, summary, search, coverage, bodycomp
-│               ├── workouts.ts        # log, query, search training
-│               ├── projects.ts        # list, get, save
-│               ├── profile.ts         # get, set
-│               ├── entities.ts        # add, get, list, search, mentions, top
-│               ├── recipes.ts         # save, list, get, build_from_recipe
-│               ├── proof_chain.ts     # score_brief_provenance
-│               ├── conflict_radar.ts  # extract_claims, scan_conflicts
-│               └── *.test.ts          # 58 tool-level Deno tests
+│       ├── alexandria/
+│       │   ├── index.ts       # MCP server (40 tools)
+│       │   ├── lib.ts         # Pure functions
+│       │   ├── lib.test.ts    # Deno tests (47)
+│       │   ├── context.ts     # Request-scoped auth context (AsyncLocalStorage)
+│       │   ├── telemetry.ts   # Tool-call logging (hash, latency, client)
+│       │   ├── deno.json      # Deno config + imports
+│       │   ├── deno.lock
+│       │   └── tools/
+│       │       ├── briefs.ts          # capture, list, search, build_room_manifest
+│       │       ├── memories.ts        # search, capture, list, stats, update, delete
+│       │       ├── health.ts          # log, query, summary, search, coverage, transitions
+│       │       ├── workouts.ts        # log, query, search training
+│       │       ├── projects.ts        # list, save
+│       │       ├── profile.ts         # get, set, whoami
+│       │       ├── entities.ts        # search, get, list, sync_status
+│       │       ├── recipes.ts         # save, list, get, build_from_recipe
+│       │       ├── proof_chain.ts     # score_brief_provenance
+│       │       ├── conflict_radar.ts  # extract_claims, scan_conflicts
+│       │       ├── telemetry.ts       # get_tool_activation_report
+│       │       └── *.test.ts          # tool-level Deno tests
+│       └── coverage-capture/  # Scheduled Edge Function (nightly snapshots)
 ├── importers/
 │   ├── shared.py              # Shared utilities
 │   ├── health-connect/        # Google Health Connect importer
@@ -216,6 +232,52 @@ Alexandria tracks data ingestion coverage to distinguish missing/non-ingested da
 ### Diagnostic Tools and Warnings
 - Use the `source_coverage_report` tool to get a full report of ingestion status and gaps across all lanes (`workouts`, `sleep`, `steps`, `heart_rate`, `weight`), grouped by status severity.
 - The `health_summary` tool automatically appends a `Coverage warnings:` block when any lanes are missing or stale, ensuring operators are immediately aware of ingestion health issues.
+
+### Transition Snapshots and Recovery Reporting
+
+A nightly scheduled Edge Function (`coverage-capture`) snapshots each lane's coverage state into `coverage_snapshots`. The `coverage_transition_report` tool then derives state transitions between consecutive snapshots:
+
+- **NEW** — a lane degraded for the first time since the last healthy snapshot
+- **ONGOING** — a lane that remains degraded across consecutive snapshots
+- **RECOVERED** — a lane that returned to `current` after being degraded
+- **STEADY** — a lane unchanged since the last snapshot
+- **TRUST-BLOCKING** — a lane degraded across 2+ snapshots, which downstream consumers should treat as untrustworthy
+
+The report also tracks `first_degraded_at`, degradation streak length, and (for brief/artifact lanes) `artifact_freshness_status` (`fresh`/`stale`/`missing`).
+
+**Brief/artifact lanes** are populated by external producers (e.g. cron jobs) via the `publish_lane_heartbeat` SQL function, recording `last_success_at` / `last_failure_at` / `last_expected_run_at` so stale artifacts that look healthy are surfaced.
+
+### Brief Lane Heartbeat
+
+External producers can report their run outcome to the coverage ledger:
+
+```sql
+SELECT publish_lane_heartbeat(
+  'night-research-pack',   -- source_name
+  'night_research_pack',   -- lane
+  TRUE,                    -- success
+  24,                      -- expected_cadence_hours
+  ARRAY['ok']              -- notes
+);
+```
+
+## Tool Activation Telemetry
+
+Every MCP tool invocation is recorded (append-only) in `tool_call_log`:
+
+- `tool_name`, `caller_client`, `timestamp`, `params_hash` (SHA-256 of the canonical JSON params — not reversible), `success`, `latency_ms`, `owner_id`
+- **Always-on** logging with a **90-day retention** window (pruned by `prune_tool_call_log`)
+- Client identity is resolved in this order: `x-alexandria-client` header → `user-agent` header → `unknown`. Set `x-alexandria-client` on your MCP client to label its calls.
+
+Use the `get_tool_activation_report` MCP tool to see, over a configurable window (default 90 days):
+
+- **Never-called** tools (from the seeded `tool_catalog`) and **dormant** tools
+- Call volume across 7/30/90-day windows
+- Per-tool trends (`rising` / `falling` / `stable`)
+- Client diversity (which clients call which tools)
+- Success rate and average latency
+
+The report tool is itself pre-seeded in `tool_catalog`, so it appears from day one.
 
 ## License
 
