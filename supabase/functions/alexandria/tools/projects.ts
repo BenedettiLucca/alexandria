@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
-
+import type { ProjectRow } from "../types.ts";
 
 export function registerProjectsTools(
   server: McpServer,
@@ -32,7 +32,19 @@ export function registerProjectsTools(
       if (!projects.length) return "No projects tracked yet.";
 
       const results = projects.map(
-        (p: any, i: number) => {
+        (
+          p: Pick<
+            ProjectRow,
+            | "id"
+            | "name"
+            | "path"
+            | "status"
+            | "stack"
+            | "created_at"
+            | "updated_at"
+          >,
+          i: number,
+        ) => {
           const stack = p.stack?.length ? ` [${p.stack.join(", ")}]` : "";
           return `${i + 1}. ${p.name} (${p.status})${stack}\n   Path: ${
             p.path || "N/A"

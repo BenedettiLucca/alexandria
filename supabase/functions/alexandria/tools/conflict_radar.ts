@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "npm:zod@3.24.1";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
 import { IGNORED_KEYWORDS } from "../lib.ts";
+import type { BriefRow } from "../types.ts";
 
 export interface BriefClaim {
   entity: string;
@@ -32,7 +33,10 @@ export interface ClaimConflict {
   description: string;
 }
 
-export function extractClaims(bodyMarkdown: string, entityRefs: string[] = []): BriefClaim[] {
+export function extractClaims(
+  bodyMarkdown: string,
+  entityRefs: string[] = [],
+): BriefClaim[] {
   const claims: BriefClaim[] = [];
   const lines = bodyMarkdown.split(/\r?\n/);
 
@@ -41,7 +45,8 @@ export function extractClaims(bodyMarkdown: string, entityRefs: string[] = []): 
     if (!trimmedLine) continue;
 
     // Regex similar to briefs.ts but allows optional sign (+/-)
-    const regex = /\b([a-zA-Z]{3,20})\s*[:=]?\s*([+-]?)\s*\$?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)/gi;
+    const regex =
+      /\b([a-zA-Z]{3,20})\s*[:=]?\s*([+-]?)\s*\$?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)/gi;
     let match;
 
     while ((match = regex.exec(trimmedLine)) !== null) {
@@ -69,7 +74,9 @@ export function extractClaims(bodyMarkdown: string, entityRefs: string[] = []): 
 
       if (afterTrimmed.startsWith("%")) {
         unit = "%";
-      } else if (/^bps\b/i.test(afterTrimmed) || /^basis\s+points\b/i.test(afterTrimmed)) {
+      } else if (
+        /^bps\b/i.test(afterTrimmed) || /^basis\s+points\b/i.test(afterTrimmed)
+      ) {
         unit = "bps";
       } else if (/^[TBMk]\b/.test(afterTrimmed)) { // Keep case check simple or uppercase
         unit = afterTrimmed[0].toUpperCase();
@@ -79,7 +86,10 @@ export function extractClaims(bodyMarkdown: string, entityRefs: string[] = []): 
         const hasDollar = match[0].includes("$") || before.trim().endsWith("$");
         if (hasDollar) {
           unit = "$";
-        } else if (trimmedLine.toLowerCase().includes("basis points") || /\bbps\b/i.test(trimmedLine)) {
+        } else if (
+          trimmedLine.toLowerCase().includes("basis points") ||
+          /\bbps\b/i.test(trimmedLine)
+        ) {
           unit = "bps";
         } else if (/%/.test(after.slice(0, 5))) {
           unit = "%";
@@ -169,11 +179,12 @@ export function detectClaimConflicts(
     brief_date: string;
     source_job: string;
     claim: BriefClaim;
-  }[]
+  }[],
 ): ClaimConflict[] {
   const groups: Record<string, typeof claims> = {};
   for (const c of claims) {
-    const key = `${c.claim.entity.toLowerCase()}::${c.claim.metric.toLowerCase()}`;
+    const key =
+      `${c.claim.entity.toLowerCase()}::${c.claim.metric.toLowerCase()}`;
     if (!groups[key]) {
       groups[key] = [];
     }
@@ -185,13 +196,20 @@ export function detectClaimConflicts(
   for (const [_, groupClaims] of Object.entries(groups)) {
     if (groupClaims.length < 2) continue;
 
-    const numericClaims = groupClaims.filter((c) => c.claim.value_numeric !== null);
+    const numericClaims = groupClaims.filter((c) =>
+      c.claim.value_numeric !== null
+    );
     if (numericClaims.length < 2) continue;
 
     let hasConflict = false;
     for (let i = 0; i < numericClaims.length; i++) {
       for (let j = i + 1; j < numericClaims.length; j++) {
-        if (Math.abs(numericClaims[i].claim.value_numeric! - numericClaims[j].claim.value_numeric!) > 0.01) {
+        if (
+          Math.abs(
+            numericClaims[i].claim.value_numeric! -
+              numericClaims[j].claim.value_numeric!,
+          ) > 0.01
+        ) {
           hasConflict = true;
           break;
         }
@@ -233,7 +251,8 @@ export function detectClaimConflicts(
     });
     const valsJoined = valStrings.join(" vs ");
     const roundedDelta = Math.round(max_delta_pct);
-    const description = `${entity} ${metric}: ${numericClaims.length} conflicting values (${valsJoined}, ${roundedDelta}% delta)`;
+    const description =
+      `${entity} ${metric}: ${numericClaims.length} conflicting values (${valsJoined}, ${roundedDelta}% delta)`;
 
     conflicts.push({
       entity,
@@ -265,11 +284,14 @@ export function formatConflicts(conflicts: ClaimConflict[]): string {
 
   return conflicts
     .map((c) => {
-      const header = `${c.entity.toUpperCase()} - ${c.metric} [Severity: ${c.severity.toUpperCase()}]`;
+      const header =
+        `${c.entity.toUpperCase()} - ${c.metric} [Severity: ${c.severity.toUpperCase()}]`;
       const desc = `Description: ${c.description}`;
       const claimsStr = c.claims
         .map((claim) => {
-          const valStr = claim.value_numeric !== null ? `${claim.value_numeric}${claim.unit}` : claim.value_text;
+          const valStr = claim.value_numeric !== null
+            ? `${claim.value_numeric}${claim.unit}`
+            : claim.value_text;
           return `- ${claim.brief_title} (${claim.brief_date}): ${valStr} | Snippet: "${claim.source_snippet}"`;
         })
         .join("\n");
@@ -278,7 +300,10 @@ export function formatConflicts(conflicts: ClaimConflict[]): string {
     .join("\n\n");
 }
 
-export function registerConflictRadarTools(server: McpServer, _getAuth: () => AuthContext | undefined) {
+export function registerConflictRadarTools(
+  server: McpServer,
+  _getAuth: () => AuthContext | undefined,
+) {
   // Tool 1: extract_brief_claims
   server.registerTool(
     "extract_brief_claims",
@@ -286,14 +311,18 @@ export function registerConflictRadarTools(server: McpServer, _getAuth: () => Au
       title: "Extract Brief Claims",
       description: "Extract structured claims from brief markdown",
       inputSchema: {
-        body_markdown: z.string().describe("The markdown body of the brief to extract claims from"),
-        entity_refs: z.array(z.string()).optional().default([]).describe("Optional array of known entities to resolve"),
+        body_markdown: z.string().describe(
+          "The markdown body of the brief to extract claims from",
+        ),
+        entity_refs: z.array(z.string()).optional().default([]).describe(
+          "Optional array of known entities to resolve",
+        ),
       },
     },
     wrapHandler(async ({ body_markdown, entity_refs }) => {
       const claims = extractClaims(body_markdown, entity_refs || []);
       return JSON.stringify(claims, null, 2);
-    })
+    }),
   );
 
   // Tool 2: scan_brief_conflicts
@@ -301,19 +330,35 @@ export function registerConflictRadarTools(server: McpServer, _getAuth: () => Au
     "scan_brief_conflicts",
     {
       title: "Scan Brief Conflicts",
-      description: "Scan recent briefs or specific briefs for contradictory numeric claims",
+      description:
+        "Scan recent briefs or specific briefs for contradictory numeric claims",
       inputSchema: {
-        brief_ids: z.array(z.string()).optional().describe("Optional array of specific brief IDs to scan"),
-        recent_days: z.number().optional().default(14).describe("Number of recent days of briefs to scan if brief_ids is not provided"),
+        brief_ids: z.array(z.string()).optional().describe(
+          "Optional array of specific brief IDs to scan",
+        ),
+        recent_days: z.number().optional().default(14).describe(
+          "Number of recent days of briefs to scan if brief_ids is not provided",
+        ),
       },
     },
     wrapHandler(async ({ brief_ids, recent_days }) => {
-      let briefs: any[] = [];
+      let briefs: Pick<
+        BriefRow,
+        | "id"
+        | "title"
+        | "brief_date"
+        | "kind"
+        | "source_job"
+        | "body_markdown"
+        | "entity_refs"
+      >[] = [];
 
       if (brief_ids && brief_ids.length > 0) {
         const { data, error } = await supabase
           .from("briefs")
-          .select("id, title, brief_date, kind, source_job, body_markdown, entity_refs")
+          .select(
+            "id, title, brief_date, kind, source_job, body_markdown, entity_refs",
+          )
           .in("id", brief_ids);
         if (error) throw new Error(`Failed to fetch briefs: ${error.message}`);
         briefs = data || [];
@@ -324,11 +369,15 @@ export function registerConflictRadarTools(server: McpServer, _getAuth: () => Au
 
         const { data, error } = await supabase
           .from("briefs")
-          .select("id, title, brief_date, kind, source_job, body_markdown, entity_refs")
+          .select(
+            "id, title, brief_date, kind, source_job, body_markdown, entity_refs",
+          )
           .gte("brief_date", cutoffStr)
           .order("brief_date", { ascending: false })
           .limit(50);
-        if (error) throw new Error(`Failed to fetch recent briefs: ${error.message}`);
+        if (error) {
+          throw new Error(`Failed to fetch recent briefs: ${error.message}`);
+        }
         briefs = data || [];
       }
 
@@ -341,7 +390,10 @@ export function registerConflictRadarTools(server: McpServer, _getAuth: () => Au
       }[] = [];
 
       for (const brief of briefs) {
-        const extracted = extractClaims(brief.body_markdown, brief.entity_refs || []);
+        const extracted = extractClaims(
+          brief.body_markdown,
+          brief.entity_refs || [],
+        );
         for (const claim of extracted) {
           claims.push({
             brief_id: brief.id,
@@ -355,6 +407,6 @@ export function registerConflictRadarTools(server: McpServer, _getAuth: () => Au
 
       const conflicts = detectClaimConflicts(claims);
       return formatConflicts(conflicts);
-    })
+    }),
   );
 }

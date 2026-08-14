@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "npm:zod@3.24.1";
 import { wrapHandler } from "../helpers.ts";
+import type { AuthContext } from "../config.ts";
 
 export interface ProofChainScore {
-  score: number;           // 0-100
+  score: number; // 0-100
   source_count: number;
   primary_source_count: number;
   derivative_source_count: number;
@@ -12,7 +13,7 @@ export interface ProofChainScore {
   has_citations: boolean;
   stale_penalty: boolean;
   single_source_penalty: boolean;
-  breakdown: string[];     // human-readable list of scoring decisions
+  breakdown: string[]; // human-readable list of scoring decisions
 }
 
 export interface BriefLike {
@@ -26,7 +27,8 @@ export interface BriefLike {
 export function countSources(bodyMarkdown: string): number {
   if (!bodyMarkdown) return 0;
 
-  const urlRegex = /(?:Source:|\[src\]|>\s*|ref:|via\b)?\s*(https?:\/\/[^\s)\]\r\n"'>]+)/gi;
+  const urlRegex =
+    /(?:Source:|\[src\]|>\s*|ref:|via\b)?\s*(https?:\/\/[^\s)\]\r\n"'>]+)/gi;
   const uniqueUrls = new Set<string>();
 
   let tempText = bodyMarkdown;
@@ -87,7 +89,10 @@ export function classifyProvenanceDepth(
   return "summary";
 }
 
-export function isStale(briefDate: string, referenceDate: Date = new Date()): boolean {
+export function isStale(
+  briefDate: string,
+  referenceDate: Date = new Date(),
+): boolean {
   try {
     const [y, m, d] = briefDate.split("-").map(Number);
     const briefUtc = Date.UTC(y, m - 1, d);
@@ -107,7 +112,10 @@ export function computeProofChainScore(brief: BriefLike): ProofChainScore {
   let score = 50;
   const breakdown: string[] = [];
 
-  const provenance_depth = classifyProvenanceDepth(brief.kind, brief.source_job);
+  const provenance_depth = classifyProvenanceDepth(
+    brief.kind,
+    brief.source_job,
+  );
   const source_count = countSources(brief.body_markdown);
   const has_evidence_blocks = hasEvidenceBlocks(brief.body_markdown);
   const has_citations = hasCitations(brief.body_markdown);
@@ -199,16 +207,19 @@ export function formatScoreBreakdown(score: ProofChainScore): string {
 
 export function registerProofChainTools(
   server: McpServer,
-  _getAuth: () => Promise<{ ownerId: string }> | any,
+  _getAuth: () => AuthContext | undefined,
 ) {
   server.registerTool(
     "score_brief_provenance",
     {
       title: "Score Brief Provenance",
-      description: "Evaluate the heuristic proof-chain score of a brief to quantify how well it unwinds back to primary evidence.",
+      description:
+        "Evaluate the heuristic proof-chain score of a brief to quantify how well it unwinds back to primary evidence.",
       inputSchema: {
         body_markdown: z.string().describe("Full markdown body of the brief"),
-        kind: z.string().describe("Brief kind/type (e.g. night_research, report)"),
+        kind: z.string().describe(
+          "Brief kind/type (e.g. night_research, report)",
+        ),
         source_job: z.string().describe("Source job/producer name"),
         brief_date: z.string().describe("Brief date (YYYY-MM-DD)"),
       },

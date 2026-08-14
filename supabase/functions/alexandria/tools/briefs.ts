@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
 import { IGNORED_KEYWORDS } from "../lib.ts";
-import type { BriefRow } from "../types.ts";
+import type { BriefRow, SearchBriefRow } from "../types.ts";
 import {
   briefToText,
   computeBriefContentHash,
@@ -29,14 +29,18 @@ export function registerBriefsTools(
           "Brief type, e.g. night_research, content_coach, synapse_diff, client_watch",
         ),
         body_markdown: z.string().describe("Full markdown body of the brief"),
-        topics: z.array(z.string()).optional().describe("High-level topical tags"),
+        topics: z.array(z.string()).optional().describe(
+          "High-level topical tags",
+        ),
         project_refs: z.array(z.string()).optional().describe(
           "Project names or slugs referenced by the brief",
         ),
         entity_refs: z.array(z.string()).optional().describe(
           "Entity names referenced by the brief",
         ),
-        metadata: z.record(z.any()).optional().describe("Optional structured metadata"),
+        metadata: z.record(z.any()).optional().describe(
+          "Optional structured metadata",
+        ),
       },
     },
     wrapHandler(
@@ -52,7 +56,9 @@ export function registerBriefsTools(
         metadata,
       }) => {
         const normalizedBody = normalizeBriefBody(body_markdown);
-        const normalizedTopics = normalizeStringArray(topics, { lowercase: true });
+        const normalizedTopics = normalizeStringArray(topics, {
+          lowercase: true,
+        });
         const normalizedProjectRefs = normalizeStringArray(project_refs);
         const normalizedEntityRefs = normalizeStringArray(entity_refs);
         const contentHash = await computeBriefContentHash({
@@ -112,49 +118,67 @@ export function registerBriefsTools(
       inputSchema: {
         limit: z.number().optional().default(10),
         kind: z.string().optional().describe("Filter by brief kind"),
-        source_job: z.string().optional().describe("Filter by source job/producer"),
+        source_job: z.string().optional().describe(
+          "Filter by source job/producer",
+        ),
         from: z.string().optional().describe("Start date YYYY-MM-DD"),
         to: z.string().optional().describe("End date YYYY-MM-DD"),
         topic: z.string().optional().describe("Filter by topic tag"),
-        project_ref: z.string().optional().describe("Filter by project reference"),
-        entity_ref: z.string().optional().describe("Filter by entity reference"),
+        project_ref: z.string().optional().describe(
+          "Filter by project reference",
+        ),
+        entity_ref: z.string().optional().describe(
+          "Filter by entity reference",
+        ),
       },
     },
-    wrapHandler(async ({ limit, kind, source_job, from, to, topic, project_ref, entity_ref }) => {
-      let q = supabase
-        .from("briefs")
-        .select(
-          "id, source_job, title, brief_date, kind, topics, project_refs, entity_refs, created_at",
-        )
-        .order("brief_date", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(limit);
+    wrapHandler(
+      async (
+        { limit, kind, source_job, from, to, topic, project_ref, entity_ref },
+      ) => {
+        let q = supabase
+          .from("briefs")
+          .select(
+            "id, source_job, title, brief_date, kind, topics, project_refs, entity_refs, created_at",
+          )
+          .order("brief_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(limit);
 
-      if (kind) q = q.eq("kind", kind.trim().toLowerCase());
-      if (source_job) q = q.eq("source_job", source_job.trim());
-      if (from) q = q.gte("brief_date", from);
-      if (to) q = q.lte("brief_date", to);
-      if (topic) q = q.contains("topics", [topic.trim().toLowerCase()]);
-      if (project_ref) q = q.contains("project_refs", [project_ref.trim()]);
-      if (entity_ref) q = q.contains("entity_refs", [entity_ref.trim()]);
+        if (kind) q = q.eq("kind", kind.trim().toLowerCase());
+        if (source_job) q = q.eq("source_job", source_job.trim());
+        if (from) q = q.gte("brief_date", from);
+        if (to) q = q.lte("brief_date", to);
+        if (topic) q = q.contains("topics", [topic.trim().toLowerCase()]);
+        if (project_ref) q = q.contains("project_refs", [project_ref.trim()]);
+        if (entity_ref) q = q.contains("entity_refs", [entity_ref.trim()]);
 
-      const { data, error } = await q;
-      if (error) throw new Error(error.message);
-      if (!data?.length) return "No briefs found.";
+        const { data, error } = await q;
+        if (error) throw new Error(error.message);
+        if (!data?.length) return "No briefs found.";
 
-      const results = (data as BriefRow[]).map((brief, index) => {
-        const meta: string[] = [
-          `${index + 1}. [${brief.brief_date}] ${brief.title} (${brief.kind})`,
-          `   Source: ${brief.source_job}`,
-        ];
-        if (brief.topics?.length) meta.push(`   Topics: ${brief.topics.join(", ")}`);
-        if (brief.project_refs?.length) meta.push(`   Projects: ${brief.project_refs.join(", ")}`);
-        if (brief.entity_refs?.length) meta.push(`   Entities: ${brief.entity_refs.join(", ")}`);
-        return meta.join("\n");
-      });
+        const results = (data as BriefRow[]).map((brief, index) => {
+          const meta: string[] = [
+            `${
+              index + 1
+            }. [${brief.brief_date}] ${brief.title} (${brief.kind})`,
+            `   Source: ${brief.source_job}`,
+          ];
+          if (brief.topics?.length) {
+            meta.push(`   Topics: ${brief.topics.join(", ")}`);
+          }
+          if (brief.project_refs?.length) {
+            meta.push(`   Projects: ${brief.project_refs.join(", ")}`);
+          }
+          if (brief.entity_refs?.length) {
+            meta.push(`   Entities: ${brief.entity_refs.join(", ")}`);
+          }
+          return meta.join("\n");
+        });
 
-      return `${data.length} brief(s):\n\n${results.join("\n\n")}`;
-    }),
+        return `${data.length} brief(s):\n\n${results.join("\n\n")}`;
+      },
+    ),
   );
 
   server.registerTool(
@@ -168,47 +192,76 @@ export function registerBriefsTools(
         limit: z.number().optional().default(10),
         threshold: z.number().optional().default(0.4),
         kind: z.string().optional().describe("Filter by brief kind"),
-        source_job: z.string().optional().describe("Filter by source job/producer"),
+        source_job: z.string().optional().describe(
+          "Filter by source job/producer",
+        ),
         from: z.string().optional().describe("Start date YYYY-MM-DD"),
         to: z.string().optional().describe("End date YYYY-MM-DD"),
         topic: z.string().optional().describe("Filter by topic tag"),
-        project_ref: z.string().optional().describe("Filter by project reference"),
-        entity_ref: z.string().optional().describe("Filter by entity reference"),
+        project_ref: z.string().optional().describe(
+          "Filter by project reference",
+        ),
+        entity_ref: z.string().optional().describe(
+          "Filter by entity reference",
+        ),
       },
     },
-    wrapHandler(async ({ query, limit, threshold, kind, source_job, from, to, topic, project_ref, entity_ref }) => {
-      const qEmb = await getEmbedding(query);
-      const { data, error } = await supabase.rpc("search_briefs", {
-        query_embedding: qEmb,
-        match_threshold: threshold,
-        match_count: limit,
-        filter_kind: kind ? kind.trim().toLowerCase() : null,
-        filter_source_job: source_job ? source_job.trim() : null,
-        filter_date_from: from || null,
-        filter_date_to: to || null,
-        filter_topics: topic ? [topic.trim().toLowerCase()] : null,
-        filter_project_refs: project_ref ? [project_ref.trim()] : null,
-        filter_entity_refs: entity_ref ? [entity_ref.trim()] : null,
-      });
+    wrapHandler(
+      async (
+        {
+          query,
+          limit,
+          threshold,
+          kind,
+          source_job,
+          from,
+          to,
+          topic,
+          project_ref,
+          entity_ref,
+        },
+      ) => {
+        const qEmb = await getEmbedding(query);
+        const { data, error } = await supabase.rpc("search_briefs", {
+          query_embedding: qEmb,
+          match_threshold: threshold,
+          match_count: limit,
+          filter_kind: kind ? kind.trim().toLowerCase() : null,
+          filter_source_job: source_job ? source_job.trim() : null,
+          filter_date_from: from || null,
+          filter_date_to: to || null,
+          filter_topics: topic ? [topic.trim().toLowerCase()] : null,
+          filter_project_refs: project_ref ? [project_ref.trim()] : null,
+          filter_entity_refs: entity_ref ? [entity_ref.trim()] : null,
+        });
 
-      if (error) throw new Error("Brief search failed");
-      if (!data?.length) return `No briefs found matching \"${query}\".`;
+        if (error) throw new Error("Brief search failed");
+        if (!data?.length) return `No briefs found matching \"${query}\".`;
 
-      const results = data.map((brief: any, index: number) => {
-        const parts = [
-          `--- ${index + 1}. ${(brief.similarity * 100).toFixed(1)}% match ---`,
-          `Title: ${brief.title}`,
-          `Kind: ${brief.kind} | Source: ${brief.source_job} | Date: ${brief.brief_date}`,
-        ];
-        if (brief.topics?.length) parts.push(`Topics: ${brief.topics.join(", ")}`);
-        if (brief.project_refs?.length) parts.push(`Projects: ${brief.project_refs.join(", ")}`);
-        if (brief.entity_refs?.length) parts.push(`Entities: ${brief.entity_refs.join(", ")}`);
-        parts.push(`\n${brief.body_markdown}`);
-        return parts.join("\n");
-      });
+        const results = data.map((brief: SearchBriefRow, index: number) => {
+          const parts = [
+            `--- ${index + 1}. ${
+              (brief.similarity * 100).toFixed(1)
+            }% match ---`,
+            `Title: ${brief.title}`,
+            `Kind: ${brief.kind} | Source: ${brief.source_job} | Date: ${brief.brief_date}`,
+          ];
+          if (brief.topics?.length) {
+            parts.push(`Topics: ${brief.topics.join(", ")}`);
+          }
+          if (brief.project_refs?.length) {
+            parts.push(`Projects: ${brief.project_refs.join(", ")}`);
+          }
+          if (brief.entity_refs?.length) {
+            parts.push(`Entities: ${brief.entity_refs.join(", ")}`);
+          }
+          parts.push(`\n${brief.body_markdown}`);
+          return parts.join("\n");
+        });
 
-      return `Found ${data.length} brief(s):\n\n${results.join("\n\n")}`;
-    }),
+        return `Found ${data.length} brief(s):\n\n${results.join("\n\n")}`;
+      },
+    ),
   );
 
   server.registerTool(
@@ -220,12 +273,20 @@ export function registerBriefsTools(
       inputSchema: {
         topic: z.string().describe("Topic or query to prepare the room for"),
         kind: z.string().optional().describe("Filter by brief kind"),
-        project_ref: z.string().optional().describe("Filter by project reference"),
-        entity_ref: z.string().optional().describe("Filter by entity reference"),
+        project_ref: z.string().optional().describe(
+          "Filter by project reference",
+        ),
+        entity_ref: z.string().optional().describe(
+          "Filter by entity reference",
+        ),
         from: z.string().optional().describe("Start date YYYY-MM-DD"),
         to: z.string().optional().describe("End date YYYY-MM-DD"),
-        max_items: z.number().optional().default(15).describe("Max briefs to consider"),
-        persist: z.boolean().optional().default(false).describe("Save manifest as a draft_room brief"),
+        max_items: z.number().optional().default(15).describe(
+          "Max briefs to consider",
+        ),
+        persist: z.boolean().optional().default(false).describe(
+          "Save manifest as a draft_room brief",
+        ),
       },
     },
     wrapHandler(
@@ -269,8 +330,14 @@ export function registerBriefsTools(
           }
         }
 
-        const conflicting_briefs = detectConflicts((briefs as BriefMatch[]) || []);
-        const proof_gaps = detectProofGaps((briefs as BriefMatch[]) || [], fresh_inputs.length, stale_inputs.length);
+        const conflicting_briefs = detectConflicts(
+          (briefs as BriefMatch[]) || [],
+        );
+        const proof_gaps = detectProofGaps(
+          (briefs as BriefMatch[]) || [],
+          fresh_inputs.length,
+          stale_inputs.length,
+        );
         const readOrderBriefs = computeReadOrder(fresh_inputs, stale_inputs);
         const suggested_read_order = readOrderBriefs.map((b, index) => {
           return `${index + 1}. ${b.title} (${b.brief_date}, ${b.kind})`;
@@ -319,7 +386,8 @@ export function registerBriefsTools(
           }
 
           if (existing) {
-            persistMsg = `\n\n[Duplicate brief blocked: manifest already persisted as brief ID ${existing.id}]`;
+            persistMsg =
+              `\n\n[Duplicate brief blocked: manifest already persisted as brief ID ${existing.id}]`;
           } else {
             const row: Record<string, unknown> = {
               source_job: "room-builder",
@@ -344,9 +412,14 @@ export function registerBriefsTools(
               .single();
 
             if (insertError || !inserted) {
-              throw new Error(`Failed to persist draft room brief: ${insertError?.message || "unknown error"}`);
+              throw new Error(
+                `Failed to persist draft room brief: ${
+                  insertError?.message || "unknown error"
+                }`,
+              );
             }
-            persistMsg = `\n\n[Persisted draft room brief as ID ${inserted.id}]`;
+            persistMsg =
+              `\n\n[Persisted draft room brief as ID ${inserted.id}]`;
           }
         }
 
@@ -395,7 +468,10 @@ export interface RoomManifest {
 }
 
 // Helper functions for Room Manifest
-export function isBriefFresh(briefDateStr: string, referenceDate: Date = new Date()): boolean {
+export function isBriefFresh(
+  briefDateStr: string,
+  referenceDate: Date = new Date(),
+): boolean {
   try {
     const [y, m, d] = briefDateStr.split("-").map(Number);
     const briefUtc = Date.UTC(y, m - 1, d);
@@ -418,9 +494,12 @@ const OPPOSING_PAIRS = [
   ["bullish", "bearish"],
 ];
 
-export function extractNumbers(text: string): { keyword: string; value: number }[] {
+export function extractNumbers(
+  text: string,
+): { keyword: string; value: number }[] {
   const results: { keyword: string; value: number }[] = [];
-  const regex = /\b([a-zA-Z]{3,20})\s*[:=]?\s*\$?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\b/g;
+  const regex =
+    /\b([a-zA-Z]{3,20})\s*[:=]?\s*\$?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\b/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
     const keyword = match[1].toLowerCase();
@@ -440,7 +519,9 @@ export function hasOpposingWords(text1: string, text2: string): string | null {
   for (const [w1, w2] of OPPOSING_PAIRS) {
     const r1 = new RegExp(`\\b${w1}\\b`, "i");
     const r2 = new RegExp(`\\b${w2}\\b`, "i");
-    if ((r1.test(text1) && r2.test(text2)) || (r2.test(text1) && r1.test(text2))) {
+    if (
+      (r1.test(text1) && r2.test(text2)) || (r2.test(text1) && r1.test(text2))
+    ) {
       return `Opposing status words: '${w1}' vs '${w2}'`;
     }
   }
@@ -484,7 +565,8 @@ export function detectConflicts(briefs: BriefMatch[]): ConflictPair[] {
               brief_b_id: b2.id,
               brief_a_title: b1.title,
               brief_b_title: b2.title,
-              reason: `Number variance for '${n1.keyword}': ${v1} vs ${v2} (>20% variance)`,
+              reason:
+                `Number variance for '${n1.keyword}': ${v1} vs ${v2} (>20% variance)`,
             });
             break; // only one conflict per pair
           }
@@ -520,7 +602,8 @@ export function detectProofGaps(
   if (total > 0 && !hasResearchOrCoach) {
     gaps.push({
       gap_type: "no_research_backing",
-      description: "No research backing: no night_research or content_coach briefs found",
+      description:
+        "No research backing: no night_research or content_coach briefs found",
     });
   }
   return gaps;
@@ -606,7 +689,11 @@ export function formatRoomManifest(manifest: RoomManifest): string {
     parts.push("- None");
   } else {
     for (const b of manifest.fresh_inputs) {
-      parts.push(`- ${b.title} (${b.brief_date}, ${b.kind}) [${(b.similarity * 100).toFixed(1)}% match]`);
+      parts.push(
+        `- ${b.title} (${b.brief_date}, ${b.kind}) [${
+          (b.similarity * 100).toFixed(1)
+        }% match]`,
+      );
     }
   }
   parts.push("");
@@ -616,7 +703,11 @@ export function formatRoomManifest(manifest: RoomManifest): string {
     parts.push("- None");
   } else {
     for (const b of manifest.stale_inputs) {
-      parts.push(`- ${b.title} (${b.brief_date}, ${b.kind}) [${(b.similarity * 100).toFixed(1)}% match]`);
+      parts.push(
+        `- ${b.title} (${b.brief_date}, ${b.kind}) [${
+          (b.similarity * 100).toFixed(1)
+        }% match]`,
+      );
     }
   }
   parts.push("");
@@ -658,4 +749,3 @@ export function formatRoomManifest(manifest: RoomManifest): string {
 
   return parts.join("\n");
 }
-

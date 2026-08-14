@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
 
 import { workoutToText } from "../lib.ts";
+import type { SearchTrainingLogRow, TrainingLogRow } from "../types.ts";
 
 export function registerWorkoutsTools(
   server: McpServer,
@@ -74,7 +75,10 @@ export function registerWorkoutsTools(
         try {
           const text = workoutToText({ ...row });
           const embedding = await getEmbedding(text);
-          await supabase.from("training_logs").update({ embedding }).eq("id", id);
+          await supabase.from("training_logs").update({ embedding }).eq(
+            "id",
+            id,
+          );
         } catch { /* non-blocking */ }
 
         return `Workout logged: ${name} (${workout_type}) on ${workout_date}`;
@@ -116,18 +120,32 @@ export function registerWorkoutsTools(
       if (error) throw new Error(error.message);
       if (!data?.length) return "No workouts found.";
 
-      const results = data.map((w: any, i: number) => {
-        const vol = w.volume_kg ? ` | Vol: ${w.volume_kg}kg` : "";
-        const rpe = w.rpe ? ` | RPE: ${w.rpe}` : "";
-        const exCount = Array.isArray(w.exercises)
-          ? `${w.exercises.length} exercises`
-          : "";
-        return `${
-          i + 1
-        }. [${w.workout_date}] ${w.name} (${w.workout_type})${vol}${rpe}\n   ${exCount}${
-          w.notes ? " -- " + w.notes : ""
-        }`;
-      });
+      const results = data.map(
+        (
+          w: Pick<
+            TrainingLogRow,
+            | "workout_date"
+            | "workout_type"
+            | "name"
+            | "exercises"
+            | "volume_kg"
+            | "rpe"
+            | "notes"
+          >,
+          i: number,
+        ) => {
+          const vol = w.volume_kg ? ` | Vol: ${w.volume_kg}kg` : "";
+          const rpe = w.rpe ? ` | RPE: ${w.rpe}` : "";
+          const exCount = Array.isArray(w.exercises)
+            ? `${w.exercises.length} exercises`
+            : "";
+          return `${
+            i + 1
+          }. [${w.workout_date}] ${w.name} (${w.workout_type})${vol}${rpe}\n   ${exCount}${
+            w.notes ? " -- " + w.notes : ""
+          }`;
+        },
+      );
       return `${data.length} workout(s):\n\n${results.join("\n\n")}`;
     }),
   );
@@ -162,7 +180,8 @@ export function registerWorkoutsTools(
       }
 
       const results = data.map(
-        (t: any, i: number) => {          const parts = [
+        (t: SearchTrainingLogRow, i: number) => {
+          const parts = [
             `--- ${i + 1}. ${(t.similarity! * 100).toFixed(1)}% match ---`,
             `Workout: ${t.name} (${t.workout_type}) on ${t.workout_date}`,
           ];

@@ -1,19 +1,24 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
+import type {
+  CoverageRow,
+  HealthEntryRow,
+  HealthSummaryRow,
+  SearchHealthEntryRow,
+} from "../types.ts";
 
 import {
   computeBodyCompDelta,
   extractBodyCompMetrics,
   formatBodyCompSummary,
+  formatCoverageReport,
+  formatCoverageWarnings,
   formatDailyHealthSummary,
   formatHealthEntry,
   recordToText,
-  formatCoverageWarnings,
-  formatCoverageReport,
 } from "../lib.ts";
-
 
 export function registerHealthTools(
   server: McpServer,
@@ -31,7 +36,9 @@ export function registerHealthTools(
         ),
         timestamp: z.string().describe("ISO 8601 timestamp"),
         duration_s: z.number().optional().describe("Duration in seconds"),
-        value: z.record(z.any()).describe("Health data as JSON (varies by type)"),
+        value: z.record(z.any()).describe(
+          "Health data as JSON (varies by type)",
+        ),
         tags: z.array(z.string()).optional(),
         numeric_value: z.number().optional().describe(
           "Primary numeric value (e.g. bpm for heart_rate, kg for weight, duration_hours for sleep)",
@@ -131,7 +138,18 @@ export function registerHealthTools(
       if (!data?.length) return "No health entries found.";
 
       const results = data.map(
-        (e: any, i: number) => formatHealthEntry(e, i),
+        (
+          e: Pick<
+            HealthEntryRow,
+            | "entry_type"
+            | "timestamp"
+            | "duration_s"
+            | "numeric_value"
+            | "value"
+            | "tags"
+          >,
+          i: number,
+        ) => formatHealthEntry(e, i),
       );
       return `${data.length} health entries:\n\n${results.join("\n\n")}`;
     }),
@@ -168,9 +186,10 @@ export function registerHealthTools(
 
       const results = data.map(
         (
-          t: any,
+          t: SearchHealthEntryRow,
           i: number,
-        ) => {          const parts = [
+        ) => {
+          const parts = [
             `--- ${i + 1}. ${(t.similarity! * 100).toFixed(1)}% match ---`,
             `Type: ${t.entry_type}`,
             `Date: ${new Date(t.timestamp).toLocaleString()}`,
@@ -229,19 +248,27 @@ export function registerHealthTools(
         return "No summary computed yet. Use refresh_summary to generate one.";
       }
 
-      const lines = data.map((s: any) => formatDailyHealthSummary(s));
+      const lines = data.map((s: HealthSummaryRow) =>
+        formatDailyHealthSummary(s)
+      );
 
       let coverageDays = days || 7;
       if (from) {
         const fromDate = new Date(from);
         const toDate = to ? new Date(to) : new Date();
         const diffMs = toDate.getTime() - fromDate.getTime();
-        coverageDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 1);
+        coverageDays = Math.max(
+          1,
+          Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 1,
+        );
       }
 
-      const { data: covData, error: covError } = await supabase.rpc("compute_source_coverage", {
-        target_days: coverageDays,
-      });
+      const { data: covData, error: covError } = await supabase.rpc(
+        "compute_source_coverage",
+        {
+          target_days: coverageDays,
+        },
+      );
 
       let warningsText = "";
       if (!covError && covData) {
@@ -263,7 +290,9 @@ export function registerHealthTools(
       description:
         "Compute or re-compute daily health summaries from raw health_entries and training_logs. Use after importing new data or to recalculate summaries.",
       inputSchema: {
-        date: z.string().optional().describe("Single date YYYY-MM-DD to refresh"),
+        date: z.string().optional().describe(
+          "Single date YYYY-MM-DD to refresh",
+        ),
         days: z.number().optional().default(1).describe(
           "Number of recent days to refresh (used when date is omitted)",
         ),
@@ -285,9 +314,12 @@ export function registerHealthTools(
       const errors: string[] = [];
 
       for (const d of dates) {
-        const { error: rpcError } = await supabase.rpc("compute_daily_summary", {
-          target_date: d,
-        });
+        const { error: rpcError } = await supabase.rpc(
+          "compute_daily_summary",
+          {
+            target_date: d,
+          },
+        );
         if (rpcError) {
           errors.push(`${d}: ${rpcError.message}`);
         } else {
@@ -392,13 +424,13 @@ export function registerHealthTools(
           timestamp: e.timestamp,
           metrics,
           delta,
-          context: (e.metadata as any)?.measurement_context,
-          precision: (e.metadata as any)?.date_precision,
+          context: e.metadata?.measurement_context,
+          precision: e.metadata?.date_precision,
         };
       });
 
       const processedGoals = (goalsData || []).map((g) => {
-        const v = g.value as any;
+        const v = g.value ?? {};
         return {
           metric_name: v.metric_name,
           target_value: v.target_value,
@@ -441,4 +473,3 @@ export function registerHealthTools(
     }),
   );
 }
-

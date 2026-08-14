@@ -1,18 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
+import type { SearchMemoryRow } from "../types.ts";
 import {
-  getEmbedding,
   classifyMemory,
+  getEmbedding,
   processEntities,
   wrapHandler,
 } from "../helpers.ts";
 
 import {
-  VALID_CATEGORIES,
-  simpleClassify,
-  memoryToText,
   formatMemoryStats,
+  memoryToText,
+  simpleClassify,
+  VALID_CATEGORIES,
 } from "../lib.ts";
 
 export function registerMemoriesTools(
@@ -50,14 +51,14 @@ export function registerMemoriesTools(
 
       const results = data.map(
         (
-          t: any,
+          t: SearchMemoryRow,
           i: number,
         ) => memoryToText(t, { index: i, includeSimilarity: true }),
       );
 
-      return `Found ${data.length} memor${data.length === 1 ? "y" : "ies"}:\n\n${
-        results.join("\n\n")
-      }`;
+      return `Found ${data.length} memor${
+        data.length === 1 ? "y" : "ies"
+      }:\n\n${results.join("\n\n")}`;
     }),
   );
 
@@ -74,7 +75,9 @@ export function registerMemoriesTools(
         title: z.string().optional().describe(
           "Optional title (auto-generated if omitted)",
         ),
-        category: z.string().optional().describe("Override auto-classification"),
+        category: z.string().optional().describe(
+          "Override auto-classification",
+        ),
         importance: z.number().optional().describe(
           "Override auto-importance (1-10)",
         ),
@@ -144,7 +147,9 @@ export function registerMemoriesTools(
         let confirmation =
           `${status} memory as "${finalCategory}" (importance ${finalImportance}/10, classified via ${classifier})`;
         if (allTags.length) confirmation += `\nTags: ${allTags.join(", ")}`;
-        if (allPeople.length) confirmation += `\nPeople: ${allPeople.join(", ")}`;
+        if (allPeople.length) {
+          confirmation += `\nPeople: ${allPeople.join(", ")}`;
+        }
 
         return confirmation;
       },
@@ -201,7 +206,7 @@ export function registerMemoriesTools(
 
         const results = data.map(
           (
-            t: any,
+            t,
             i: number,
           ) => memoryToText(t, { index: i }),
         );
@@ -258,7 +263,11 @@ export function registerMemoriesTools(
         const update: Record<string, unknown> = {};
         if (title !== undefined) update.title = title;
         if (category !== undefined) {
-          if (!VALID_CATEGORIES.includes(category as any)) {
+          if (
+            !VALID_CATEGORIES.includes(
+              category as (typeof VALID_CATEGORIES)[number],
+            )
+          ) {
             throw new Error(
               `Invalid category: "${category}". Valid: ${
                 VALID_CATEGORIES.join(", ")

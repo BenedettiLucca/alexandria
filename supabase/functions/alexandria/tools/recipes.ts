@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "npm:zod@3.24.1";
-import { supabase } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
+import type { RoomRecipeRow } from "../types.ts";
 import { BriefMatch } from "./briefs.ts";
 import { computeProofChainScore } from "./proof_chain.ts";
-
 
 export interface RoomRecipe {
   id: string;
@@ -34,7 +34,10 @@ export interface RankedBrief {
 export function applyRecipeExclusions(
   briefs: BriefMatch[],
   recipe: RoomRecipe,
-): { included: BriefMatch[]; excluded: { brief: BriefMatch; reason: string }[] } {
+): {
+  included: BriefMatch[];
+  excluded: { brief: BriefMatch; reason: string }[];
+} {
   const included: BriefMatch[] = [];
   const excluded: { brief: BriefMatch; reason: string }[] = [];
 
@@ -65,7 +68,9 @@ export function applyRecipeExclusions(
       });
       continue;
     }
-    if (allowedSourceJobs.size > 0 && !allowedSourceJobs.has(brief.source_job)) {
+    if (
+      allowedSourceJobs.size > 0 && !allowedSourceJobs.has(brief.source_job)
+    ) {
       excluded.push({
         brief,
         reason: `Source job "${brief.source_job}" is not allowed by recipe`,
@@ -106,7 +111,8 @@ export function applyRecipeWeights(
       boosts.push(`kind boost (${brief.kind}: ${sign}${kWeight})`);
     }
 
-    const pcWeights = priorityWeights.proof_chain ?? priorityWeights.proof_chain_score;
+    const pcWeights = priorityWeights.proof_chain ??
+      priorityWeights.proof_chain_score;
     if (pcWeights !== undefined) {
       const pcWeight = pcWeights.weight ?? pcWeights.multiplier;
       if (pcWeight !== undefined) {
@@ -114,14 +120,19 @@ export function applyRecipeWeights(
         const boost = pcScore * pcWeight;
         adjustedScore += boost;
         const sign = boost >= 0 ? "+" : "";
-        boosts.push(`proof_chain boost (score: ${pcScore}, weight: ${pcWeight}: ${sign}${Number(boost.toFixed(4))})`);
+        boosts.push(
+          `proof_chain boost (score: ${pcScore}, weight: ${pcWeight}: ${sign}${
+            Number(boost.toFixed(4))
+          })`,
+        );
       }
     }
 
-
     let inclusionReason = `semantic match (${originalSimilarity})`;
     if (boosts.length > 0) {
-      inclusionReason += ` + ${boosts.join(" + ")} = ${Number(adjustedScore.toFixed(4))}`;
+      inclusionReason += ` + ${boosts.join(" + ")} = ${
+        Number(adjustedScore.toFixed(4))
+      }`;
     } else {
       inclusionReason += ` = ${originalSimilarity}`;
     }
@@ -155,8 +166,14 @@ export function formatRankedManifest(
     parts.push("- None");
   } else {
     for (const rb of ranked) {
-      parts.push(`- ${rb.brief.title} (${rb.brief.brief_date}, ${rb.brief.kind})`);
-      parts.push(`  Source: ${rb.brief.source_job} | Adjusted Score: ${rb.adjusted_score.toFixed(2)} | Reason: ${rb.inclusion_reason}`);
+      parts.push(
+        `- ${rb.brief.title} (${rb.brief.brief_date}, ${rb.brief.kind})`,
+      );
+      parts.push(
+        `  Source: ${rb.brief.source_job} | Adjusted Score: ${
+          rb.adjusted_score.toFixed(2)
+        } | Reason: ${rb.inclusion_reason}`,
+      );
     }
   }
   parts.push("");
@@ -166,7 +183,9 @@ export function formatRankedManifest(
     parts.push("- None");
   } else {
     for (const ex of excluded) {
-      parts.push(`- ${ex.brief.title} (${ex.brief.brief_date}, ${ex.brief.kind})`);
+      parts.push(
+        `- ${ex.brief.title} (${ex.brief.brief_date}, ${ex.brief.kind})`,
+      );
       parts.push(`  Source: ${ex.brief.source_job} | Reason: ${ex.reason}`);
     }
   }
@@ -178,7 +197,11 @@ export function formatRankedManifest(
   } else {
     const top5 = ranked.slice(0, 5);
     top5.forEach((rb, index) => {
-      parts.push(`${index + 1}. ${rb.brief.title} (Score: ${rb.adjusted_score.toFixed(2)})`);
+      parts.push(
+        `${index + 1}. ${rb.brief.title} (Score: ${
+          rb.adjusted_score.toFixed(2)
+        })`,
+      );
     });
   }
 
@@ -187,7 +210,7 @@ export function formatRankedManifest(
 
 export function registerRecipeTools(
   server: McpServer,
-  getAuth: () => Promise<{ ownerId: string }> | any,
+  _getAuth: () => AuthContext | undefined,
 ) {
   server.registerTool(
     "save_room_recipe",
@@ -196,21 +219,41 @@ export function registerRecipeTools(
       description: "Upsert a saved room recipe by name.",
       inputSchema: {
         name: z.string().describe("Unique name for the recipe"),
-        description: z.string().optional().default("").describe("Description of the recipe"),
-        profile_hint: z.string().optional().default("").describe("Associated profile key/hint"),
-        topic_seed: z.string().optional().default("").describe("Default topic query seed"),
-        allowed_kinds: z.array(z.string()).optional().default([]).describe("Allowed brief kinds"),
-        allowed_source_jobs: z.array(z.string()).optional().default([]).describe("Allowed source jobs"),
-        excluded_kinds: z.array(z.string()).optional().default([]).describe("Excluded brief kinds"),
-        excluded_source_jobs: z.array(z.string()).optional().default([]).describe("Excluded source jobs"),
-        required_project_refs: z.array(z.string()).optional().default([]).describe("Required project references"),
-        required_entity_refs: z.array(z.string()).optional().default([]).describe("Required entity references"),
-        freshness_window_days: z.number().optional().default(14).describe("Freshness window in days"),
-        priority_weights: z.record(z.record(z.number())).optional().default({}).describe(
-          "Priority weights mapping source_job and kind to numbers",
+        description: z.string().optional().default("").describe(
+          "Description of the recipe",
         ),
-        max_items_default: z.number().optional().default(15).describe("Default maximum items to return"),
-        token_budget_hint: z.number().optional().nullable().default(null).describe("Optional token budget hint"),
+        profile_hint: z.string().optional().default("").describe(
+          "Associated profile key/hint",
+        ),
+        topic_seed: z.string().optional().default("").describe(
+          "Default topic query seed",
+        ),
+        allowed_kinds: z.array(z.string()).optional().default([]).describe(
+          "Allowed brief kinds",
+        ),
+        allowed_source_jobs: z.array(z.string()).optional().default([])
+          .describe("Allowed source jobs"),
+        excluded_kinds: z.array(z.string()).optional().default([]).describe(
+          "Excluded brief kinds",
+        ),
+        excluded_source_jobs: z.array(z.string()).optional().default([])
+          .describe("Excluded source jobs"),
+        required_project_refs: z.array(z.string()).optional().default([])
+          .describe("Required project references"),
+        required_entity_refs: z.array(z.string()).optional().default([])
+          .describe("Required entity references"),
+        freshness_window_days: z.number().optional().default(14).describe(
+          "Freshness window in days",
+        ),
+        priority_weights: z.record(z.record(z.number())).optional().default({})
+          .describe(
+            "Priority weights mapping source_job and kind to numbers",
+          ),
+        max_items_default: z.number().optional().default(15).describe(
+          "Default maximum items to return",
+        ),
+        token_budget_hint: z.number().optional().nullable().default(null)
+          .describe("Optional token budget hint"),
       },
     },
     wrapHandler(async (args) => {
@@ -248,26 +291,39 @@ export function registerRecipeTools(
     "list_room_recipes",
     {
       title: "List Room Recipes",
-      description: "List all room recipes, optionally filtered by profile_hint.",
+      description:
+        "List all room recipes, optionally filtered by profile_hint.",
       inputSchema: {
         profile_hint: z.string().optional().describe("Filter by profile hint"),
       },
     },
     wrapHandler(async ({ profile_hint }) => {
-      let query = supabase.from("room_recipes").select("id, name, description, profile_hint").order("name");
+      let query = supabase.from("room_recipes").select(
+        "id, name, description, profile_hint",
+      ).order("name");
       if (profile_hint) {
         query = query.eq("profile_hint", profile_hint.trim());
       }
 
       const { data, error } = await query;
-      if (error) throw new Error(`Failed to list room recipes: ${error.message}`);
+      if (error) {
+        throw new Error(`Failed to list room recipes: ${error.message}`);
+      }
       if (!data || data.length === 0) return "No room recipes found.";
 
-      const list = data.map((r: any, idx: number) => {
-        return `${idx + 1}. ${r.name}: ${r.description || "(no description)"}${
-          r.profile_hint ? ` (profile hint: ${r.profile_hint})` : ""
-        }`;
-      }).join("\n");
+      const list = data.map(
+        (
+          r: Pick<
+            RoomRecipeRow,
+            "id" | "name" | "description" | "profile_hint"
+          >,
+          idx: number,
+        ) => {
+          return `${idx + 1}. ${r.name}: ${
+            r.description || "(no description)"
+          }${r.profile_hint ? ` (profile hint: ${r.profile_hint})` : ""}`;
+        },
+      ).join("\n");
 
       return `Found ${data.length} recipe(s):\n\n${list}`;
     }),
@@ -300,10 +356,13 @@ export function registerRecipeTools(
     "build_room_manifest_from_recipe",
     {
       title: "Build Room Manifest from Recipe",
-      description: "Generates a room manifest using exclusions and weights from a saved recipe.",
+      description:
+        "Generates a room manifest using exclusions and weights from a saved recipe.",
       inputSchema: {
         recipe_name: z.string().describe("Unique name of the recipe to load"),
-        topic: z.string().optional().describe("Override the default topic query seed"),
+        topic: z.string().optional().describe(
+          "Override the default topic query seed",
+        ),
       },
     },
     wrapHandler(async ({ recipe_name, topic }) => {
@@ -313,37 +372,56 @@ export function registerRecipeTools(
         .eq("name", recipe_name.trim())
         .maybeSingle();
 
-      if (recipeError) throw new Error(`Recipe lookup failed: ${recipeError.message}`);
+      if (recipeError) {
+        throw new Error(`Recipe lookup failed: ${recipeError.message}`);
+      }
       if (!recipe) throw new Error(`Recipe "${recipe_name}" not found.`);
 
       const finalTopic = topic || recipe.topic_seed;
       if (!finalTopic) {
-        throw new Error("Topic must be provided or recipe must have a topic_seed.");
+        throw new Error(
+          "Topic must be provided or recipe must have a topic_seed.",
+        );
       }
 
       const qEmb = await getEmbedding(finalTopic);
-      const { data: briefs, error: searchError } = await supabase.rpc("search_briefs", {
-        query_embedding: qEmb,
-        match_threshold: 0.4,
-        match_count: recipe.max_items_default ?? 15,
-        filter_kind: null,
-        filter_source_job: null,
-        filter_date_from: null,
-        filter_date_to: null,
-        filter_topics: null,
-        filter_project_refs: recipe.required_project_refs && recipe.required_project_refs.length > 0
-          ? recipe.required_project_refs
-          : null,
-        filter_entity_refs: recipe.required_entity_refs && recipe.required_entity_refs.length > 0
-          ? recipe.required_entity_refs
-          : null,
-      });
+      const { data: briefs, error: searchError } = await supabase.rpc(
+        "search_briefs",
+        {
+          query_embedding: qEmb,
+          match_threshold: 0.4,
+          match_count: recipe.max_items_default ?? 15,
+          filter_kind: null,
+          filter_source_job: null,
+          filter_date_from: null,
+          filter_date_to: null,
+          filter_topics: null,
+          filter_project_refs: recipe.required_project_refs &&
+              recipe.required_project_refs.length > 0
+            ? recipe.required_project_refs
+            : null,
+          filter_entity_refs: recipe.required_entity_refs &&
+              recipe.required_entity_refs.length > 0
+            ? recipe.required_entity_refs
+            : null,
+        },
+      );
 
-      if (searchError) throw new Error(`Brief search failed: ${searchError.message}`);
+      if (searchError) {
+        throw new Error(`Brief search failed: ${searchError.message}`);
+      }
 
-      const { included, excluded } = applyRecipeExclusions((briefs || []) as BriefMatch[], recipe);
+      const { included, excluded } = applyRecipeExclusions(
+        (briefs || []) as BriefMatch[],
+        recipe,
+      );
       const ranked = applyRecipeWeights(included, recipe);
-      const manifest = formatRankedManifest(finalTopic, recipe, ranked, excluded);
+      const manifest = formatRankedManifest(
+        finalTopic,
+        recipe,
+        ranked,
+        excluded,
+      );
 
       return manifest;
     }),

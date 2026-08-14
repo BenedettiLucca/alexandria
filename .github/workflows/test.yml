@@ -45,3 +45,6 @@ jobs:
 
       - name: Run tests
         run: deno test --allow-all supabase/functions/alexandria/
+
+      - name: Type check
+        run: deno check supabase/functions/alexandria/index.ts

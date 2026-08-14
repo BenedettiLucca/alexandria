@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
-
+import type { ProfileRow } from "../types.ts";
 
 export function registerProfileTools(
   server: McpServer,
@@ -47,7 +47,9 @@ export function registerProfileTools(
         return "Profile is empty. Use set_profile to add entries.";
       }
 
-      const sections = data.map((s: any) =>
+      const sections = data.map((
+        s: Pick<ProfileRow, "key" | "value" | "updated_at">,
+      ) =>
         `== ${s.key} == (updated ${
           new Date(s.updated_at).toLocaleDateString()
         })\n${JSON.stringify(s.value, null, 2)}`
@@ -122,7 +124,9 @@ export function registerProfileTools(
 
         if (!error && profileKeys?.length) {
           lines.push("", "Profile sections:");
-          profileKeys.forEach((p: { key: string }) => lines.push(`  - ${p.key}`));
+          profileKeys.forEach((p: { key: string }) =>
+            lines.push(`  - ${p.key}`)
+          );
         }
       }
 

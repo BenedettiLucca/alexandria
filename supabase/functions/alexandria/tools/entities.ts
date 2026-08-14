@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { supabase, AuthContext } from "../config.ts";
+import { AuthContext, supabase } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
+import type { MemoryRow, SyncLogRow } from "../types.ts";
 export function registerEntitiesTools(
   server: McpServer,
   _getAuth: () => AuthContext | undefined,
@@ -33,22 +34,22 @@ export function registerEntitiesTools(
       if (error) throw new Error(error.message);
       if (!data?.length) return `No entities found matching "${query}".`;
 
-      const entityIds = data.map((e: any) => e.id);
+      const entityIds = data.map((e) => e.id);
       await supabase
         .from("entity_mentions")
         .select("entity_id", { count: "exact", head: true })
         .in("entity_id", entityIds);
 
       const results = data.map(
-        (e: any, i: number) => {
+        (e, i: number) => {
           const desc = e.description ? `\n   ${e.description}` : "";
           return `${i + 1}. ${e.name} (${e.entity_type})${desc}`;
         },
       );
 
-      return `${data.length} entit${data.length === 1 ? "y" : "ies"} found:\n\n${
-        results.join("\n")
-      }`;
+      return `${data.length} entit${
+        data.length === 1 ? "y" : "ies"
+      } found:\n\n${results.join("\n")}`;
     }),
   );
 
@@ -81,8 +82,11 @@ export function registerEntitiesTools(
 
       if (mentionErr) throw new Error(mentionErr.message);
 
-      const memoryIds = (mentions || []).map((m: any) => m.memory_id);
-      let memoryDetails: any[] = [];
+      const memoryIds = (mentions || []).map((m) => m.memory_id);
+      let memoryDetails: Pick<
+        MemoryRow,
+        "id" | "content" | "title" | "category" | "created_at"
+      >[] = [];
       if (memoryIds.length) {
         const { data: mems } = await supabase
           .from("memories")
@@ -101,7 +105,7 @@ export function registerEntitiesTools(
 
       if (mentions?.length) {
         lines.push("", "Related memories:");
-        mentions.forEach((m: any, i: number) => {
+        mentions.forEach((m, i: number) => {
           const mem = memById.get(m.memory_id);
           if (mem) {
             lines.push(
@@ -142,7 +146,7 @@ export function registerEntitiesTools(
       if (entityErr) throw new Error(entityErr.message);
       if (!entities?.length) return "No entities in the knowledge graph yet.";
 
-      const entityIds = entities.map((e: any) => e.id);
+      const entityIds = entities.map((e) => e.id);
       const { data: mentions } = await supabase
         .from("entity_mentions")
         .select("entity_id")
@@ -150,18 +154,21 @@ export function registerEntitiesTools(
 
       const countByEntity = new Map<string, number>();
       for (const m of mentions || []) {
-        countByEntity.set(m.entity_id, (countByEntity.get(m.entity_id) || 0) + 1);
+        countByEntity.set(
+          m.entity_id,
+          (countByEntity.get(m.entity_id) || 0) + 1,
+        );
       }
 
       const sorted = entities
-        .map((e: any) => ({
+        .map((e) => ({
           ...e,
           mention_count: countByEntity.get(e.id) || 0,
         }))
-        .sort((a: any, b: any) => b.mention_count - a.mention_count)
+        .sort((a, b) => b.mention_count - a.mention_count)
         .slice(0, limit);
 
-      const results = sorted.map((e: any, i: number) =>
+      const results = sorted.map((e, i: number) =>
         `${i + 1}. ${e.name} (${e.entity_type}) — ${e.mention_count} mention${
           e.mention_count === 1 ? "" : "s"
         }`
@@ -203,24 +210,44 @@ export function registerEntitiesTools(
       if (error) throw new Error(error.message);
       if (!data?.length) return "No sync history found.";
 
-      const results = data.map((s: any, i: number) => {
-        const started = new Date(s.started_at).toLocaleString();
-        const completed = s.completed_at
-          ? new Date(s.completed_at).toLocaleString()
-          : "—";
-        const dur = s.completed_at
-          ? `${
-            Math.round(
-              (new Date(s.completed_at).getTime() -
-                new Date(s.started_at).getTime()) / 1000,
-            )
-          }s`
-          : "—";
-        const errLine = s.error_message ? `\n   Error: ${s.error_message}` : "";
-        return `${
-          i + 1
-        }. [${started}] ${s.source} (${s.sync_type}) — ${s.status}${errLine}\n   Processed: ${s.records_processed} | Imported: ${s.records_imported} | Skipped: ${s.records_skipped} | Failed: ${s.records_failed}\n   Duration: ${dur} | Completed: ${completed}`;
-      });
+      const results = data.map(
+        (
+          s: Pick<
+            SyncLogRow,
+            | "id"
+            | "source"
+            | "sync_type"
+            | "records_processed"
+            | "records_imported"
+            | "records_skipped"
+            | "records_failed"
+            | "started_at"
+            | "completed_at"
+            | "status"
+            | "error_message"
+          >,
+          i: number,
+        ) => {
+          const started = new Date(s.started_at).toLocaleString();
+          const completed = s.completed_at
+            ? new Date(s.completed_at).toLocaleString()
+            : "—";
+          const dur = s.completed_at
+            ? `${
+              Math.round(
+                (new Date(s.completed_at).getTime() -
+                  new Date(s.started_at).getTime()) / 1000,
+              )
+            }s`
+            : "—";
+          const errLine = s.error_message
+            ? `\n   Error: ${s.error_message}`
+            : "";
+          return `${
+            i + 1
+          }. [${started}] ${s.source} (${s.sync_type}) — ${s.status}${errLine}\n   Processed: ${s.records_processed} | Imported: ${s.records_imported} | Skipped: ${s.records_skipped} | Failed: ${s.records_failed}\n   Duration: ${dur} | Completed: ${completed}`;
+        },
+      );
 
       return `${data.length} sync(s):\n\n${results.join("\n\n")}`;
     }),

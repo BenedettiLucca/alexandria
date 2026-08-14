@@ -1,14 +1,12 @@
 import {
+  CLASSIFICATION_MODEL,
+  EMBEDDING_MODEL,
   OPENROUTER_API_KEY,
   OPENROUTER_BASE,
-  EMBEDDING_MODEL,
-  CLASSIFICATION_MODEL,
   supabase,
 } from "./config.ts";
-import {
-  VALID_CATEGORIES,
-  sanitizeClassification,
-} from "./lib.ts";
+import { sanitizeClassification, VALID_CATEGORIES } from "./lib.ts";
+import type { EntityType } from "./types.ts";
 
 export async function getEmbedding(text: string): Promise<number[]> {
   const r = await fetch(`${OPENROUTER_BASE}/embeddings`, {
@@ -30,7 +28,9 @@ export async function getEmbedding(text: string): Promise<number[]> {
   return d.data[0].embedding;
 }
 
-export async function classifyMemory(text: string): Promise<Record<string, unknown>> {
+export async function classifyMemory(
+  text: string,
+): Promise<Record<string, unknown>> {
   const defaults = {
     category: "note",
     tags: ["uncategorized"],
@@ -83,8 +83,8 @@ export function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
 
-export function wrapHandler(fn: (input: any) => Promise<string>) {
-  return async (input: any) => {
+export function wrapHandler<Args>(fn: (input: Args) => Promise<string>) {
+  return async (input: Args) => {
     try {
       return ok(await fn(input));
     } catch (e: unknown) {
@@ -111,6 +111,13 @@ const VALID_ENTITY_TYPES = [
   "other",
 ] as const;
 
+function coerceEntityType(value: unknown): EntityType {
+  return typeof value === "string" &&
+      (VALID_ENTITY_TYPES as readonly string[]).includes(value)
+    ? (value as EntityType)
+    : "other";
+}
+
 export async function processEntities(
   memoryId: string,
   rawEntities: unknown[],
@@ -124,9 +131,7 @@ export async function processEntities(
       const obj = e as Record<string, unknown>;
       return {
         name: String(obj.name).trim().slice(0, 200),
-        type: VALID_ENTITY_TYPES.includes(obj.type as any)
-          ? obj.type as any
-          : "other",
+        type: coerceEntityType(obj.type),
         context: obj.context ? String(obj.context).slice(0, 500) : null,
       };
     });

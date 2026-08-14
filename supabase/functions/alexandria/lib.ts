@@ -1,17 +1,146 @@
+import type { CoverageRow, HealthEntryRow, HealthSummaryRow } from "./types.ts";
+
 export const IGNORED_KEYWORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "been", "have", "has", "had",
-  "is", "will", "would", "shall", "should", "can", "could", "may", "might", "must",
-  "about", "above", "across", "after", "against", "along", "among", "around", "at", "before", "behind", "below", "beneath", "beside",
-  "between", "beyond", "but", "by", "concerning", "considering", "despite", "down", "during", "except", "following",
-  "in", "inside", "into", "like", "minus", "near", "next", "of", "off", "on", "onto", "opposite", "out", "outside", "over", "past",
-  "plus", "regarding", "round", "save", "since", "than", "through", "to", "toward", "towards", "under", "underneath", "unlike",
-  "until", "up", "upon", "versus", "via", "without",
-  "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-  "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december",
-  "mon", "tue", "wed", "thu", "fri", "sat", "sun",
-  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-  "year", "years", "month", "months", "week", "weeks", "day", "days", "hour", "hours", "minute", "minutes", "second", "seconds",
-  "price", "volume", "total", "market", "data"
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "this",
+  "from",
+  "are",
+  "was",
+  "were",
+  "been",
+  "have",
+  "has",
+  "had",
+  "is",
+  "will",
+  "would",
+  "shall",
+  "should",
+  "can",
+  "could",
+  "may",
+  "might",
+  "must",
+  "about",
+  "above",
+  "across",
+  "after",
+  "against",
+  "along",
+  "among",
+  "around",
+  "at",
+  "before",
+  "behind",
+  "below",
+  "beneath",
+  "beside",
+  "between",
+  "beyond",
+  "but",
+  "by",
+  "concerning",
+  "considering",
+  "despite",
+  "down",
+  "during",
+  "except",
+  "following",
+  "in",
+  "inside",
+  "into",
+  "like",
+  "minus",
+  "near",
+  "next",
+  "of",
+  "off",
+  "on",
+  "onto",
+  "opposite",
+  "out",
+  "outside",
+  "over",
+  "past",
+  "plus",
+  "regarding",
+  "round",
+  "save",
+  "since",
+  "than",
+  "through",
+  "to",
+  "toward",
+  "towards",
+  "under",
+  "underneath",
+  "unlike",
+  "until",
+  "up",
+  "upon",
+  "versus",
+  "via",
+  "without",
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+  "january",
+  "february",
+  "march",
+  "april",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+  "sun",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "year",
+  "years",
+  "month",
+  "months",
+  "week",
+  "weeks",
+  "day",
+  "days",
+  "hour",
+  "hours",
+  "minute",
+  "minutes",
+  "second",
+  "seconds",
+  "price",
+  "volume",
+  "total",
+  "market",
+  "data",
 ]);
 
 export const VALID_CATEGORIES = [
@@ -265,25 +394,41 @@ export function briefToText(record: Record<string, unknown>): string {
 }
 
 export function memoryToText(
-  record: Record<string, unknown>,
+  record: {
+    similarity?: number | null;
+    created_at: string;
+    category: string;
+    title: string | null;
+    importance: number | null;
+    tags: string[] | null;
+    content: string;
+  },
   opts: { index?: number; includeSimilarity?: boolean } = {},
 ): string {
   const parts = [];
-  const similarity = record.similarity as number | undefined;
+  const similarity = record.similarity ?? undefined;
   const i = opts.index;
 
   if (opts.includeSimilarity && similarity != null) {
     parts.push(
-      `--- ${i != null ? i + 1 + ". " : ""}${(similarity * 100).toFixed(1)}% match ---`,
+      `--- ${i != null ? i + 1 + ". " : ""}${
+        (similarity * 100).toFixed(1)
+      }% match ---`,
     );
   } else if (i != null) {
-    parts.push(`${i + 1}. [${new Date(record.created_at as string).toLocaleDateString()}] ${record.category}`);
+    parts.push(
+      `${i + 1}. [${
+        new Date(record.created_at).toLocaleDateString()
+      }] ${record.category}`,
+    );
   }
 
   if (opts.includeSimilarity || i == null) {
     parts.push(`Title: ${record.title || "Untitled"}`);
-    parts.push(`Category: ${record.category} | Importance: ${record.importance ?? 0}/10`);
-    parts.push(`Date: ${new Date(record.created_at as string).toLocaleDateString()}`);
+    parts.push(
+      `Category: ${record.category} | Importance: ${record.importance ?? 0}/10`,
+    );
+    parts.push(`Date: ${new Date(record.created_at).toLocaleDateString()}`);
   }
 
   if (record.tags && Array.isArray(record.tags) && record.tags.length) {
@@ -293,7 +438,7 @@ export function memoryToText(
   if (opts.includeSimilarity || i == null) {
     parts.push(`\n${record.content}`);
   } else {
-    parts.push(`   ${record.title || (record.content as string).slice(0, 120)}`);
+    parts.push(`   ${record.title || record.content.slice(0, 120)}`);
   }
 
   return parts.join("\n");
@@ -331,7 +476,8 @@ export function formatMemoryStats(data: {
     `Total memories: ${count}`,
     `Date range: ${
       entries.length
-        ? new Date(entries[entries.length - 1].created_at).toLocaleDateString() +
+        ? new Date(entries[entries.length - 1].created_at)
+          .toLocaleDateString() +
           " -> " +
           new Date(entries[0].created_at).toLocaleDateString()
         : "N/A"
@@ -406,13 +552,14 @@ export function computeBodyCompDelta(
 }
 
 export function formatHealthEntry(
-  e: Record<string, any>,
+  e: Pick<
+    HealthEntryRow,
+    "entry_type" | "timestamp" | "duration_s" | "numeric_value" | "value"
+  >,
   index?: number,
 ): string {
-  const ts = new Date(e.timestamp as string).toLocaleString();
-  const dur = e.duration_s
-    ? ` (${Math.round((e.duration_s as number) / 60)}min)`
-    : "";
+  const ts = new Date(e.timestamp).toLocaleString();
+  const dur = e.duration_s ? ` (${Math.round(e.duration_s / 60)}min)` : "";
   const numVal = e.numeric_value != null ? ` [${e.numeric_value}]` : "";
   const prefix = index != null ? `${index + 1}. ` : "";
   return `${prefix}[${ts}] ${e.entry_type}${dur}${numVal}\n   ${
@@ -420,7 +567,7 @@ export function formatHealthEntry(
   }`;
 }
 
-export function formatDailyHealthSummary(s: Record<string, any>): string {
+export function formatDailyHealthSummary(s: HealthSummaryRow): string {
   const parts = [`== ${s.date} ==`];
   if (s.sleep_total_hours != null) {
     parts.push(
@@ -440,14 +587,14 @@ export function formatDailyHealthSummary(s: Record<string, any>): string {
     );
   }
   if (s.weight_kg != null) parts.push(`Weight: ${s.weight_kg}kg`);
-  if (s.exercise_count > 0) {
+  if (s.exercise_count != null && s.exercise_count > 0) {
     parts.push(
       `Exercise: ${s.exercise_count} sessions, ${s.exercise_total_minutes}min${
         s.exercise_types?.length ? ` [${s.exercise_types.join(", ")}]` : ""
       }`,
     );
   }
-  if (s.workout_count > 0) {
+  if (s.workout_count != null && s.workout_count > 0) {
     parts.push(
       `Training: ${s.workout_count} workouts${
         s.training_volume_kg ? `, ${s.training_volume_kg}kg vol` : ""
@@ -465,7 +612,10 @@ export function formatBodyCompSummary(
   entries: Array<{
     timestamp: string;
     metrics: Record<string, number | null>;
-    delta?: Record<string, any>;
+    delta?: Record<
+      string,
+      { delta: number; direction: "up" | "down" | "flat" } | null
+    >;
     context?: string;
     precision?: string;
   }>,
@@ -527,10 +677,16 @@ export function formatBodyCompSummary(
 
   for (const [key, val] of Object.entries(latest.metrics)) {
     if (val != null) {
-      let line = `- ${metricLabels[key] || key}: ${val}${metricUnits[key] || ""}`;
+      let line = `- ${metricLabels[key] || key}: ${val}${
+        metricUnits[key] || ""
+      }`;
       const d = latest.delta?.[key];
       if (d) {
-        const arrow = d.direction === "up" ? "↑" : d.direction === "down" ? "↓" : "→";
+        const arrow = d.direction === "up"
+          ? "↑"
+          : d.direction === "down"
+          ? "↓"
+          : "→";
         line += ` (${arrow} ${Math.abs(d.delta)}${metricUnits[key] || ""})`;
       }
       parts.push(line);
@@ -551,7 +707,7 @@ export function formatBodyCompSummary(
   return parts.join("\n");
 }
 
-export function formatCoverageWarnings(rows: any[]): string {
+export function formatCoverageWarnings(rows: CoverageRow[]): string {
   const warnings: string[] = [];
   for (const row of rows) {
     const status = row.coverage_status;
@@ -565,8 +721,11 @@ export function formatCoverageWarnings(rows: any[]): string {
     } else if (status === "summary_stale") {
       details = "summaries exist but lane lacks current entries";
     } else if (status === "late") {
-      const gap = row.gap_hours != null ? `${row.gap_hours}h ago` : "unknown gap";
-      details = `last seen ${gap}, expected cadence ${row.expected_cadence_hours}h`;
+      const gap = row.gap_hours != null
+        ? `${row.gap_hours}h ago`
+        : "unknown gap";
+      details =
+        `last seen ${gap}, expected cadence ${row.expected_cadence_hours}h`;
     } else {
       details = status;
     }
@@ -577,8 +736,8 @@ export function formatCoverageWarnings(rows: any[]): string {
   return `Coverage warnings:\n${warnings.join("\n")}`;
 }
 
-export function formatCoverageReport(rows: any[]): string {
-  const groups: Record<string, any[]> = {
+export function formatCoverageReport(rows: CoverageRow[]): string {
+  const groups: Record<"critical" | "warning" | "healthy", CoverageRow[]> = {
     critical: [],
     warning: [],
     healthy: [],
@@ -621,11 +780,16 @@ export function formatCoverageReport(rows: any[]): string {
   return sections.join("\n\n");
 }
 
-function formatCoverageRow(r: any): string {
-  const lastEvent = r.last_event_at ? new Date(r.last_event_at).toISOString() : "Never";
-  const lastIngested = r.last_ingested_at ? new Date(r.last_ingested_at).toISOString() : "Never";
+function formatCoverageRow(r: CoverageRow): string {
+  const lastEvent = r.last_event_at
+    ? new Date(r.last_event_at).toISOString()
+    : "Never";
+  const lastIngested = r.last_ingested_at
+    ? new Date(r.last_ingested_at).toISOString()
+    : "Never";
   const gap = r.gap_hours != null ? `${r.gap_hours}h` : "N/A";
-  const notesStr = (r.notes && r.notes.length) ? ` | Notes: ${r.notes.join(", ")}` : "";
+  const notesStr = (r.notes && r.notes.length)
+    ? ` | Notes: ${r.notes.join(", ")}`
+    : "";
   return `- Lane: ${r.lane} (Source: ${r.source_name})\n  Status: ${r.coverage_status} | Cadence: ${r.expected_cadence_hours}h | Gap: ${gap}\n  Last Event: ${lastEvent} | Ingested: ${lastIngested}${notesStr}`;
 }
-
