@@ -54,6 +54,12 @@ npx supabase functions deploy alexandria \
     --project-ref "$PROJECT_REF" \
     --use-api
 
+# Deploy the coverage-capture scheduler (nightly snapshot capture)
+echo "Deploying coverage-capture scheduler..."
+npx supabase functions deploy coverage-capture \
+    --project-ref "$PROJECT_REF" \
+    --use-api
+
 # Set secrets (persistent across deploys)
 echo "Setting secrets..."
 npx supabase secrets set \

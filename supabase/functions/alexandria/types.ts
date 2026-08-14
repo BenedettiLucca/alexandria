@@ -223,6 +223,34 @@ export interface CoverageRow {
   notes: string[];
 }
 
+export type TransitionType =
+  | "NEW"
+  | "ONGOING"
+  | "RECOVERED"
+  | "STEADY";
+
+export type ArtifactFreshnessStatus = "fresh" | "stale" | "missing" | "n/a";
+
+export interface TransitionRow {
+  source_kind: string;
+  source_name: string;
+  lane: string;
+  prev_status: string | null;
+  prev_captured_at: string | null;
+  current_status: string;
+  current_captured_at: string;
+  transition_type: TransitionType;
+  first_degraded_at: string | null;
+  degradation_streak: number;
+  gap_hours: number | null;
+  expected_cadence_hours: number | null;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_expected_run_at: string | null;
+  artifact_freshness_status: ArtifactFreshnessStatus;
+  trust_blocking: boolean;
+}
+
 export interface SearchMemoryRow extends MemoryRow {
   similarity: number;
 }

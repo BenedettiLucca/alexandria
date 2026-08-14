@@ -7,6 +7,7 @@ import type {
   HealthEntryRow,
   HealthSummaryRow,
   SearchHealthEntryRow,
+  TransitionRow,
 } from "../types.ts";
 
 import {
@@ -14,6 +15,7 @@ import {
   extractBodyCompMetrics,
   formatBodyCompSummary,
   formatCoverageReport,
+  formatCoverageTransitions,
   formatCoverageWarnings,
   formatDailyHealthSummary,
   formatHealthEntry,
@@ -270,9 +272,21 @@ export function registerHealthTools(
         },
       );
 
+      let transitionMap: Record<string, TransitionRow> | undefined;
+      const { data: transData, error: transError } = await supabase.rpc(
+        "get_coverage_transition_report",
+        { p_days: Math.max(coverageDays, 30) },
+      );
+      if (!transError && transData) {
+        transitionMap = {};
+        for (const t of transData as TransitionRow[]) {
+          transitionMap[`${t.source_name}:${t.lane}`] = t;
+        }
+      }
+
       let warningsText = "";
       if (!covError && covData) {
-        warningsText = formatCoverageWarnings(covData);
+        warningsText = formatCoverageWarnings(covData, transitionMap);
       }
 
       const summaryText = `${data.length} day(s):\n\n${lines.join("\n\n")}`;
@@ -470,6 +484,32 @@ export function registerHealthTools(
       if (error) throw new Error(error.message);
       if (!data) return "No coverage data returned.";
       return formatCoverageReport(data);
+    }),
+  );
+
+  server.registerTool(
+    "coverage_transition_report",
+    {
+      title: "Coverage Transition Report",
+      description:
+        "Report coverage transitions from persisted snapshots: NEW, ONGOING, or RECOVERED degradation per lane, degradation streaks, and trust-blocking lanes. Requires coverage snapshots to exist (run capture_coverage_snapshot or rely on the scheduled capture).",
+      inputSchema: {
+        days: z.number().optional().default(30).describe(
+          "Number of recent days to analyze transitions",
+        ),
+      },
+    },
+    wrapHandler(async ({ days }) => {
+      const { data, error } = await supabase.rpc(
+        "get_coverage_transition_report",
+        {
+          p_days: days || 30,
+        },
+      );
+      if (error) throw new Error(error.message);
+      if (!data) return "No coverage transition data returned.";
+      const rows = data as TransitionRow[];
+      return formatCoverageTransitions(rows);
     }),
   );
 }

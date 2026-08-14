@@ -1,4 +1,9 @@
-import type { CoverageRow, HealthEntryRow, HealthSummaryRow } from "./types.ts";
+import type {
+  CoverageRow,
+  HealthEntryRow,
+  HealthSummaryRow,
+  TransitionRow,
+} from "./types.ts";
 
 export const IGNORED_KEYWORDS = new Set([
   "the",
@@ -707,11 +712,28 @@ export function formatBodyCompSummary(
   return parts.join("\n");
 }
 
-export function formatCoverageWarnings(rows: CoverageRow[]): string {
+export function formatCoverageWarnings(
+  rows: CoverageRow[],
+  transitions?: Record<string, TransitionRow>,
+): string {
   const warnings: string[] = [];
   for (const row of rows) {
     const status = row.coverage_status;
     if (status === "current") continue;
+
+    const transition = transitions?.[`${row.source_name}:${row.lane}`];
+    let tag = "";
+    if (transition) {
+      if (transition.trust_blocking) {
+        tag = " [TRUST-BLOCKING]";
+      } else if (transition.transition_type === "NEW") {
+        tag = " [NEW]";
+      } else if (transition.transition_type === "ONGOING") {
+        tag = " [ONGOING]";
+      } else if (transition.transition_type === "RECOVERED") {
+        tag = " [RECOVERED]";
+      }
+    }
 
     let details = "";
     if (status === "missing") {
@@ -729,7 +751,7 @@ export function formatCoverageWarnings(rows: CoverageRow[]): string {
     } else {
       details = status;
     }
-    warnings.push(`- ${row.lane}: ${status} (${details})`);
+    warnings.push(`- ${row.lane}: ${status}${tag} (${details})`);
   }
 
   if (warnings.length === 0) return "";
@@ -792,4 +814,91 @@ function formatCoverageRow(r: CoverageRow): string {
     ? ` | Notes: ${r.notes.join(", ")}`
     : "";
   return `- Lane: ${r.lane} (Source: ${r.source_name})\n  Status: ${r.coverage_status} | Cadence: ${r.expected_cadence_hours}h | Gap: ${gap}\n  Last Event: ${lastEvent} | Ingested: ${lastIngested}${notesStr}`;
+}
+
+function formatTransitionRow(t: TransitionRow): string {
+  const line = `- ${t.lane} (Source: ${t.source_name}) [${t.source_kind}]`;
+  const status =
+    `  Current: ${t.current_status} | Transition: ${t.transition_type}`;
+  const transition = `  Prev: ${t.prev_status ?? "none"} → ${t.current_status}`;
+
+  const extra: string[] = [];
+  if (t.first_degraded_at) {
+    extra.push(
+      `First degraded: ${new Date(t.first_degraded_at).toISOString()}`,
+    );
+  }
+  if (t.degradation_streak > 0) {
+    extra.push(`Streak: ${t.degradation_streak} snapshot(s)`);
+  }
+  if (t.artifact_freshness_status && t.artifact_freshness_status !== "n/a") {
+    extra.push(`Artifact: ${t.artifact_freshness_status}`);
+  }
+  const details = extra.length ? `\n  ${extra.join(" | ")}` : "";
+
+  const severity = t.trust_blocking
+    ? "🔴"
+    : t.transition_type === "NEW"
+    ? "🟠"
+    : t.transition_type === "ONGOING"
+    ? "🟡"
+    : t.transition_type === "RECOVERED"
+    ? "🟢"
+    : "⚪";
+  return `${severity} ${line}\n${status} | ${transition}${details}`;
+}
+
+export function formatCoverageTransitions(rows: TransitionRow[]): string {
+  if (!rows || rows.length === 0) {
+    return "No coverage transition history in the requested window.";
+  }
+
+  const blocked: TransitionRow[] = [];
+  const newDegradation: TransitionRow[] = [];
+  const ongoing: TransitionRow[] = [];
+  const recovered: TransitionRow[] = [];
+  const steady: TransitionRow[] = [];
+
+  for (const row of rows) {
+    if (row.trust_blocking) {
+      blocked.push(row);
+    } else if (row.transition_type === "NEW") {
+      newDegradation.push(row);
+    } else if (row.transition_type === "ONGOING") {
+      ongoing.push(row);
+    } else if (row.transition_type === "RECOVERED") {
+      recovered.push(row);
+    } else {
+      steady.push(row);
+    }
+  }
+
+  const sections: string[] = ["Coverage Transition Report"];
+
+  if (blocked.length > 0) {
+    sections.push("🔴 TRUST-BLOCKING (degraded across 2+ snapshots):");
+    for (const row of blocked) sections.push(formatTransitionRow(row));
+  }
+
+  if (newDegradation.length > 0) {
+    sections.push("🟠 NEW DEGRADATION:");
+    for (const row of newDegradation) sections.push(formatTransitionRow(row));
+  }
+
+  if (ongoing.length > 0) {
+    sections.push("🟡 ONGOING DEGRADATION:");
+    for (const row of ongoing) sections.push(formatTransitionRow(row));
+  }
+
+  if (recovered.length > 0) {
+    sections.push("🟢 RECOVERED:");
+    for (const row of recovered) sections.push(formatTransitionRow(row));
+  }
+
+  if (steady.length > 0) {
+    sections.push("⚪ STEADY / HEALTHY:");
+    for (const row of steady) sections.push(formatTransitionRow(row));
+  }
+
+  return sections.join("\n\n");
 }
