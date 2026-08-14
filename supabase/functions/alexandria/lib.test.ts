@@ -74,8 +74,8 @@ Deno.test("formatBodyCompSummary includes latest metrics, delta arrows, goals, a
     timestamp: "2025-06-01T08:00:00Z",
     metrics: { weight_kg: 80.5, body_fat_percent: 15.0 },
     delta: {
-      weight_kg: { delta: 0.5, direction: "up" },
-      body_fat_percent: { delta: -0.2, direction: "down" },
+      weight_kg: { delta: 0.5, direction: "up" as const },
+      body_fat_percent: { delta: -0.2, direction: "down" as const },
     },
     context: "evening",
     precision: "day",

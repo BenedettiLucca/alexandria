@@ -1,13 +1,16 @@
 import { assertEquals } from "jsr:@std/assert@1.0.12";
 import { formatCoverageWarnings, formatCoverageReport } from "../lib.ts";
+import type { CoverageRow } from "../types.ts";
 
 Deno.test("formatCoverageWarnings formats mixed-state scenario correctly", () => {
-  const rows = [
+  const rows: CoverageRow[] = [
     {
       lane: "workouts",
       source_name: "iron-log",
       coverage_status: "current",
       last_event_at: "2026-07-02T00:00:00Z",
+      last_ingested_at: "2026-07-02T00:00:00Z",
+      last_summary_refresh_at: "2026-07-02T00:00:00Z",
       gap_hours: 4,
       expected_cadence_hours: 96,
       true_zero_possible: true,
@@ -18,6 +21,8 @@ Deno.test("formatCoverageWarnings formats mixed-state scenario correctly", () =>
       source_name: "health-connect",
       coverage_status: "missing",
       last_event_at: null,
+      last_ingested_at: null,
+      last_summary_refresh_at: null,
       gap_hours: null,
       expected_cadence_hours: 36,
       true_zero_possible: false,
@@ -28,6 +33,8 @@ Deno.test("formatCoverageWarnings formats mixed-state scenario correctly", () =>
       source_name: "health-connect",
       coverage_status: "never_seen",
       last_event_at: null,
+      last_ingested_at: null,
+      last_summary_refresh_at: null,
       gap_hours: null,
       expected_cadence_hours: 36,
       true_zero_possible: false,
@@ -48,12 +55,14 @@ Deno.test("formatCoverageWarnings formats mixed-state scenario correctly", () =>
 });
 
 Deno.test("formatCoverageReport groups rows by status severity", () => {
-  const rows = [
+  const rows: CoverageRow[] = [
     {
       lane: "workouts",
       source_name: "iron-log",
       coverage_status: "current",
       last_event_at: "2026-07-02T00:00:00Z",
+      last_ingested_at: "2026-07-02T00:00:00Z",
+      last_summary_refresh_at: "2026-07-02T00:00:00Z",
       gap_hours: 4,
       expected_cadence_hours: 96,
       true_zero_possible: true,
@@ -64,6 +73,8 @@ Deno.test("formatCoverageReport groups rows by status severity", () => {
       source_name: "health-connect",
       coverage_status: "missing",
       last_event_at: null,
+      last_ingested_at: null,
+      last_summary_refresh_at: null,
       gap_hours: null,
       expected_cadence_hours: 36,
       true_zero_possible: false,
@@ -74,6 +85,8 @@ Deno.test("formatCoverageReport groups rows by status severity", () => {
       source_name: "health-connect",
       coverage_status: "never_seen",
       last_event_at: null,
+      last_ingested_at: null,
+      last_summary_refresh_at: null,
       gap_hours: null,
       expected_cadence_hours: 36,
       true_zero_possible: false,
@@ -84,6 +97,8 @@ Deno.test("formatCoverageReport groups rows by status severity", () => {
       source_name: "health-connect",
       coverage_status: "late",
       last_event_at: "2026-06-15T00:00:00Z",
+      last_ingested_at: "2026-06-15T00:00:00Z",
+      last_summary_refresh_at: "2026-06-15T00:00:00Z",
       gap_hours: 400,
       expected_cadence_hours: 336,
       true_zero_possible: false,

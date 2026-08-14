@@ -1,7 +1,8 @@
 import { assertEquals } from "jsr:@std/assert@1.0.12";
 import { formatCoverageTransitions, formatCoverageWarnings } from "../lib.ts";
+import type { CoverageRow, TransitionRow } from "../types.ts";
 
-const base = {
+const base: Omit<TransitionRow, "lane" | "transition_type"> = {
   source_kind: "health",
   source_name: "health-connect",
   prev_status: "current",
@@ -25,7 +26,7 @@ Deno.test("formatCoverageTransitions empty rows", () => {
 });
 
 Deno.test("formatCoverageTransitions groups NEW degradation", () => {
-  const rows = [
+  const rows: TransitionRow[] = [
     {
       ...base,
       lane: "sleep",
@@ -41,7 +42,7 @@ Deno.test("formatCoverageTransitions groups NEW degradation", () => {
 });
 
 Deno.test("formatCoverageTransitions flags trust-blocking separately", () => {
-  const rows = [
+  const rows: TransitionRow[] = [
     {
       ...base,
       lane: "steps",
@@ -58,7 +59,7 @@ Deno.test("formatCoverageTransitions flags trust-blocking separately", () => {
 });
 
 Deno.test("formatCoverageTransitions distinguishes RECOVERED and STEADY", () => {
-  const rows = [
+  const rows: TransitionRow[] = [
     {
       ...base,
       lane: "weight",
@@ -83,7 +84,7 @@ Deno.test("formatCoverageTransitions distinguishes RECOVERED and STEADY", () => 
 });
 
 Deno.test("formatCoverageTransitions renders brief artifact freshness", () => {
-  const rows = [
+  const rows: TransitionRow[] = [
     {
       ...base,
       source_kind: "brief",
@@ -103,7 +104,7 @@ Deno.test("formatCoverageTransitions renders brief artifact freshness", () => {
 });
 
 Deno.test("formatCoverageWarnings annotates NEW and ONGOING via transitions", () => {
-  const covRows = [
+  const covRows: CoverageRow[] = [
     {
       source_name: "health-connect",
       lane: "sleep",
@@ -117,7 +118,7 @@ Deno.test("formatCoverageWarnings annotates NEW and ONGOING via transitions", ()
       notes: [],
     },
   ];
-  const transitions = {
+  const transitions: Record<string, TransitionRow> = {
     "health-connect:sleep": {
       ...base,
       lane: "sleep",

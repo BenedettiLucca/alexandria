@@ -44,7 +44,16 @@ jobs:
           deno-version: v2.x
 
       - name: Run tests
-        run: deno test --allow-all supabase/functions/alexandria/
+        working-directory: supabase/functions/alexandria
+        run: deno test --allow-all .
+        env:
+          SUPABASE_URL: http://localhost:5432
+          SUPABASE_SERVICE_ROLE_KEY: test-key
+          LOCAL_SUPABASE_URL: http://localhost:5432
+          LOCAL_SUPABASE_SERVICE_ROLE_KEY: test-key
+          MCP_ACCESS_KEY: test
+          OPENROUTER_API_KEY: test
 
       - name: Type check
-        run: deno check supabase/functions/alexandria/index.ts
+        working-directory: supabase/functions/alexandria
+        run: deno check index.ts
