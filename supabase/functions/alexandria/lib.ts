@@ -2,6 +2,7 @@ import type {
   CoverageRow,
   HealthEntryRow,
   HealthSummaryRow,
+  ToolActivationRow,
   TransitionRow,
 } from "./types.ts";
 
@@ -901,4 +902,61 @@ export function formatCoverageTransitions(rows: TransitionRow[]): string {
   }
 
   return sections.join("\n\n");
+}
+
+export function formatToolActivationReport(rows: ToolActivationRow[]): string {
+  if (!rows || rows.length === 0) {
+    return "No tool activation data available.";
+  }
+
+  const neverCalled = rows.filter((row) => row.never_called);
+  const dormant = rows.filter(
+    (row) => !row.never_called && row.total_calls === 0,
+  );
+  const active = rows
+    .filter((row) => row.total_calls > 0)
+    .sort((a, b) => b.total_calls - a.total_calls);
+
+  const sections: string[] = ["Tool Activation Report"];
+
+  if (neverCalled.length > 0) {
+    sections.push(`🔴 NEVER CALLED (${neverCalled.length}):`);
+    for (const row of neverCalled) {
+      sections.push(`- ${row.tool_name}`);
+    }
+  }
+
+  if (dormant.length > 0) {
+    sections.push(`🟡 DORMANT (${dormant.length}):`);
+    for (const row of dormant) {
+      sections.push(`- ${row.tool_name}`);
+    }
+  }
+
+  if (active.length > 0) {
+    sections.push(`🟢 ACTIVE (${active.length}):`);
+    for (const row of active) {
+      const successRate = row.success_rate != null
+        ? `${row.success_rate}%`
+        : "n/a";
+      const latency = row.avg_latency_ms != null
+        ? `${row.avg_latency_ms}ms`
+        : "n/a";
+      const clients = row.clients.length > 0
+        ? row.clients.join(", ")
+        : "unknown";
+      const lastCalled = row.last_called_at
+        ? new Date(row.last_called_at).toISOString()
+        : "never";
+      sections.push(
+        `- ${row.tool_name} — ${row.total_calls} calls (7d: ${
+          row.called_7d ? "yes" : "no"
+        } | 30d: ${row.called_30d ? "yes" : "no"} | 90d: ${
+          row.called_90d ? "yes" : "no"
+        }) | success ${successRate} | avg ${latency} | clients: ${clients} | trend: ${row.trend} | last: ${lastCalled}`,
+      );
+    }
+  }
+
+  return sections.join("\n");
 }

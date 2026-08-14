@@ -293,6 +293,44 @@ export interface UpsertMemoryResult {
 
 export interface DailySummaryResult extends Record<string, unknown> {}
 
+export interface ToolCatalogRow {
+  tool_name: string;
+  created_at: string;
+}
+
+export interface ToolCallLogRow {
+  id: number;
+  tool_name: string;
+  caller_client: string | null;
+  timestamp: string;
+  params_hash: string | null;
+  success: boolean;
+  latency_ms: number | null;
+  owner_id: string | null;
+}
+
+export type ToolActivationTrend =
+  | "never"
+  | "dormant"
+  | "rising"
+  | "falling"
+  | "stable";
+
+export interface ToolActivationRow {
+  tool_name: string;
+  never_called: boolean;
+  called_7d: boolean;
+  called_30d: boolean;
+  called_90d: boolean;
+  total_calls: number;
+  success_rate: number | null;
+  avg_latency_ms: number | null;
+  last_called_at: string | null;
+  client_count: number;
+  clients: string[];
+  trend: ToolActivationTrend;
+}
+
 export type Database = {
   public: {
     Tables: {
@@ -368,6 +406,18 @@ export type Database = {
         Update: Record<string, unknown>;
         Relationships: [];
       };
+      tool_catalog: {
+        Row: ToolCatalogRow;
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      tool_call_log: {
+        Row: ToolCallLogRow;
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -434,6 +484,18 @@ export type Database = {
       compute_source_coverage: {
         Args: { target_days?: number };
         Returns: CoverageRow[];
+      };
+      get_coverage_transition_report: {
+        Args: { p_days?: number };
+        Returns: TransitionRow[];
+      };
+      get_tool_activation_report: {
+        Args: { p_days?: number };
+        Returns: ToolActivationRow[];
+      };
+      prune_tool_call_log: {
+        Args: { p_retention_days?: number };
+        Returns: number[];
       };
     };
     Enums: Record<string, never>;

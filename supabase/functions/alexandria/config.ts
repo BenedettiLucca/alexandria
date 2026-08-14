@@ -23,7 +23,7 @@ export function getCorsHeaders(
   const headers: Record<string, string> = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-brain-key, accept, mcp-session-id",
+      "authorization, x-client-info, apikey, content-type, x-brain-key, accept, mcp-session-id, x-alexandria-client",
     "Access-Control-Max-Age": "86400",
   };
   if (

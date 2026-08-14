@@ -1,16 +1,19 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPTransport } from "@hono/mcp";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import {
-  supabase,
+  AuthContext,
+  getCorsHeaders,
   MCP_ACCESS_KEY,
+  supabase,
   SUPABASE_URL,
   timingSafeEqual,
-  getCorsHeaders,
-  AuthContext,
 } from "./config.ts";
+import { getAuth, runWithContext } from "./context.ts";
+import { recordToolCall } from "./telemetry.ts";
 
 import { registerMemoriesTools } from "./tools/memories.ts";
 import { registerBriefsTools } from "./tools/briefs.ts";
@@ -22,7 +25,7 @@ import { registerWorkoutsTools } from "./tools/workouts.ts";
 import { registerEntitiesTools } from "./tools/entities.ts";
 import { registerProofChainTools } from "./tools/proof_chain.ts";
 import { registerConflictRadarTools } from "./tools/conflict_radar.ts";
-
+import { registerTelemetryTools } from "./tools/telemetry.ts";
 
 const OAUTH_SCOPE = "alexandria.access";
 const MCP_PUBLIC_URL = `${SUPABASE_URL}/functions/v1/alexandria`;
@@ -32,8 +35,35 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-let currentAuth: AuthContext | undefined;
-const getAuth = () => currentAuth;
+const originalRegisterTool = server.registerTool.bind(server);
+server.registerTool = ((
+  name: string,
+  config: Parameters<typeof originalRegisterTool>[1],
+  cb: (args: unknown, extra: unknown) => unknown,
+) => {
+  const instrumented = async (args: unknown, extra: unknown) => {
+    const startedAt = performance.now();
+    try {
+      const result = await cb(args, extra);
+      recordToolCall({
+        toolName: name,
+        args,
+        success: (result as CallToolResult | undefined)?.isError !== true,
+        latencyMs: performance.now() - startedAt,
+      });
+      return result;
+    } catch (error) {
+      recordToolCall({
+        toolName: name,
+        args,
+        success: false,
+        latencyMs: performance.now() - startedAt,
+      });
+      throw error;
+    }
+  };
+  return originalRegisterTool(name, config, instrumented);
+}) as unknown as typeof server.registerTool;
 
 registerMemoriesTools(server, getAuth);
 registerBriefsTools(server, getAuth);
@@ -45,13 +75,15 @@ registerWorkoutsTools(server, getAuth);
 registerEntitiesTools(server, getAuth);
 registerProofChainTools(server, getAuth);
 registerConflictRadarTools(server, getAuth);
-
+registerTelemetryTools(server, getAuth);
 
 function getProtectedResourceMetadataUrl(): string {
   return `${MCP_PUBLIC_URL}?oauth_metadata=protected_resource`;
 }
 
-function getOAuthChallenge(errorDescription = "Authorization required"): string {
+function getOAuthChallenge(
+  errorDescription = "Authorization required",
+): string {
   const resourceMetadata = getProtectedResourceMetadataUrl();
   return `Bearer realm="alexandria", resource_metadata="${resourceMetadata}", scope="${OAUTH_SCOPE}", error="invalid_token", error_description="${errorDescription}"`;
 }
@@ -101,12 +133,17 @@ async function getAuthorizationServerMetadata() {
     jwks_uri: oidc.jwks_uri,
     response_types_supported: oidc.response_types_supported || ["code"],
     response_modes_supported: oidc.response_modes_supported || ["query"],
-    grant_types_supported: oidc.grant_types_supported || ["authorization_code", "refresh_token"],
-    token_endpoint_auth_methods_supported: oidc.token_endpoint_auth_methods_supported || ["none"],
-    code_challenge_methods_supported: oidc.code_challenge_methods_supported || ["S256"],
-    scopes_supported: oidc.scopes_supported || ["openid", "profile", "email", OAUTH_SCOPE],
+    grant_types_supported: oidc.grant_types_supported ||
+      ["authorization_code", "refresh_token"],
+    token_endpoint_auth_methods_supported:
+      oidc.token_endpoint_auth_methods_supported || ["none"],
+    code_challenge_methods_supported: oidc.code_challenge_methods_supported ||
+      ["S256"],
+    scopes_supported: oidc.scopes_supported ||
+      ["openid", "profile", "email", OAUTH_SCOPE],
     subject_types_supported: oidc.subject_types_supported || ["public"],
-    id_token_signing_alg_values_supported: oidc.id_token_signing_alg_values_supported || ["RS256"],
+    id_token_signing_alg_values_supported:
+      oidc.id_token_signing_alg_values_supported || ["RS256"],
   };
 }
 
@@ -142,7 +179,10 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
 
 const app = new Hono();
 
-app.options("*", (c) => c.text("ok", 200, getCorsHeaders(c.req.header("origin"))));
+app.options(
+  "*",
+  (c) => c.text("ok", 200, getCorsHeaders(c.req.header("origin"))),
+);
 
 app.get("/.well-known/oauth-protected-resource", (c) => {
   return c.json(protectedResourceMetadata(), 200, {
@@ -166,7 +206,11 @@ app.get("/.well-known/oauth-authorization-server", async (c) => {
       "Cache-Control": "public, max-age=300",
     });
   } catch {
-    return c.json({ error: "OAuth metadata unavailable" }, 503, getCorsHeaders(c.req.header("origin")));
+    return c.json(
+      { error: "OAuth metadata unavailable" },
+      503,
+      getCorsHeaders(c.req.header("origin")),
+    );
   }
 });
 
@@ -178,7 +222,11 @@ app.get("/.well-known/oauth-authorization-server/*", async (c) => {
       "Cache-Control": "public, max-age=300",
     });
   } catch {
-    return c.json({ error: "OAuth metadata unavailable" }, 503, getCorsHeaders(c.req.header("origin")));
+    return c.json(
+      { error: "OAuth metadata unavailable" },
+      503,
+      getCorsHeaders(c.req.header("origin")),
+    );
   }
 });
 
@@ -190,7 +238,11 @@ app.get("/.well-known/openid-configuration", async (c) => {
       "Cache-Control": "public, max-age=300",
     });
   } catch {
-    return c.json({ error: "OAuth metadata unavailable" }, 503, getCorsHeaders(c.req.header("origin")));
+    return c.json(
+      { error: "OAuth metadata unavailable" },
+      503,
+      getCorsHeaders(c.req.header("origin")),
+    );
   }
 });
 
@@ -205,7 +257,11 @@ app.all("*", async (c) => {
     });
   }
 
-  if (c.req.method === "GET" && (oauthMeta === "authorization_server" || oauthMeta === "openid_configuration")) {
+  if (
+    c.req.method === "GET" &&
+    (oauthMeta === "authorization_server" ||
+      oauthMeta === "openid_configuration")
+  ) {
     try {
       const metadata = await getAuthorizationServerMetadata();
       return c.json(metadata, 200, {
@@ -213,7 +269,11 @@ app.all("*", async (c) => {
         "Cache-Control": "public, max-age=300",
       });
     } catch {
-      return c.json({ error: "OAuth metadata unavailable" }, 503, getCorsHeaders(c.req.header("origin")));
+      return c.json(
+        { error: "OAuth metadata unavailable" },
+        503,
+        getCorsHeaders(c.req.header("origin")),
+      );
     }
   }
 
@@ -222,10 +282,11 @@ app.all("*", async (c) => {
     return unauthorized(c);
   }
 
-  currentAuth = auth;
-
   const acceptHeader = c.req.header("accept") || "";
-  if (!acceptHeader.includes("application/json") || !acceptHeader.includes("text/event-stream")) {
+  if (
+    !acceptHeader.includes("application/json") ||
+    !acceptHeader.includes("text/event-stream")
+  ) {
     const headers = new Headers(c.req.raw.headers);
     headers.set("Accept", "application/json, text/event-stream");
     const patched = new Request(c.req.raw.url, {
@@ -238,9 +299,16 @@ app.all("*", async (c) => {
     Object.defineProperty(c.req, "raw", { value: patched, writable: true });
   }
 
+  const callerClient = c.req.header("x-alexandria-client") ||
+    c.req.header("user-agent") ||
+    "unknown";
+
   const transport = new StreamableHTTPTransport();
   await server.connect(transport);
-  return transport.handleRequest(c);
+  return runWithContext(
+    { auth, callerClient },
+    () => transport.handleRequest(c),
+  );
 });
 
 Deno.serve(app.fetch);
