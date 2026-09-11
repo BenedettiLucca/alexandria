@@ -36,6 +36,25 @@ export {
   ProviderTransportError,
 };
 
+export {
+  CasConflictError,
+  DEFAULT_EMBEDDING_SPACE,
+  DimensionMismatchError,
+  EMBEDDING_DIMENSION,
+  generateSyntheticEmbedding,
+  IndexingWorker,
+  InvalidBudgetError,
+  InvalidSpaceError,
+  preflightDimensionCheck,
+  preflightSpaceCheck,
+  type BackfillOptions,
+  type BackfillResult,
+  type BatchOptions,
+  type IndexingJob,
+  type LifecycleStatus,
+  type ReconcileResult,
+} from "./lifecycle.ts";
+
 const defaultProvider = new OpenRouterProvider();
 
 export async function getEmbedding(
