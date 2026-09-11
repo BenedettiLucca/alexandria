@@ -5,6 +5,7 @@ Configuração e fixtures de teste de integração contra PostgreSQL/PostgREST l
 import asyncio
 import os
 import subprocess
+import uuid
 
 import asyncpg
 import pytest
@@ -138,3 +139,39 @@ def run_sql(db_url):
         return asyncio.run(_run())
 
     return _execute
+
+
+@pytest.fixture
+def auth_user_factory(service_client, credentials):
+    """Cria usuários autenticados efêmeros para testes de isolamento de owner."""
+    created_users = []
+
+    def _create(email_prefix="user"):
+        email = f"{email_prefix}_{uuid.uuid4().hex[:8]}@example.com"
+        password = "TestPassword123!"
+        res = service_client.auth.admin.create_user(
+            {"email": email, "password": password, "email_confirm": True}
+        )
+        user_id = res.user.id
+        client = create_client(LOCAL_POSTGREST_URL, credentials["LOCAL_ANON"])
+        client.auth.sign_in_with_password({"email": email, "password": password})
+        created_users.append(user_id)
+        return {"id": user_id, "email": email, "client": client}
+
+    yield _create
+
+    for uid in created_users:
+        try:
+            service_client.auth.admin.delete_user(uid)
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def user_a(auth_user_factory):
+    return auth_user_factory("user_a")
+
+
+@pytest.fixture
+def user_b(auth_user_factory):
+    return auth_user_factory("user_b")

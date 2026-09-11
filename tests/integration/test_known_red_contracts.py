@@ -32,17 +32,11 @@ def test_issue_48_profile_upsert_on_conflict_contract(service_client):
     ).execute()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known-RED issue #37: external_id promete dedupe/upsert mas não há constraint UNIQUE em health_entries",
-)
 def test_issue_37_health_entries_external_id_unique_constraint(service_client):
     """
     Issue #37:
     'external_id' é documentado como chave externa de deduplicação e idempotência.
-    Porém, não existe índice UNIQUE ou constraint UNIQUE em health_entries(external_id).
-    Portanto, inserir dois registros com o mesmo external_id cria duas linhas duplicadas em vez de conflitar.
-    O teste falha (XFAIL) ao esperar que o segundo insert seja rejeitado ou deduplicado pelo banco.
+    Com a migração de identidade (T06), a unicidade é garantida e o segundo insert falha com 23505.
     """
     test_ext_id = f"ext_{uuid.uuid4().hex[:8]}"
     row_data = {
@@ -55,12 +49,10 @@ def test_issue_37_health_entries_external_id_unique_constraint(service_client):
     try:
         service_client.table("health_entries").insert(row_data).execute()
 
-        # Se houvesse constraint UNIQUE em external_id, este segundo insert falharia com 23505 (unique_violation)
-        # Como não existe a constraint (bug da issue #37), o insert tem sucesso indevido gerando duplicatas.
         with pytest.raises(APIError) as excinfo:
             service_client.table("health_entries").insert(row_data).execute()
 
-        assert excinfo.value.args[0].get("code") == "23505"
+        assert excinfo.value.code == "23505"
     finally:
         service_client.table("health_entries").delete().eq(
             "external_id", test_ext_id
