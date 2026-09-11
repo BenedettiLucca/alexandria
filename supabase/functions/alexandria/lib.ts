@@ -1,5 +1,6 @@
 import type {
   CoverageRow,
+  EntityType,
   HealthEntryRow,
   HealthSummaryRow,
   ToolActivationRow,
@@ -205,6 +206,112 @@ export async function computeBriefContentHash(input: {
     .join("");
 }
 
+export const VALID_ENTITY_TYPES = [
+  "person",
+  "project",
+  "concept",
+  "location",
+  "technology",
+  "organization",
+  "event",
+  "other",
+] as const;
+
+export interface ValidatedEntity {
+  name: string;
+  type: EntityType;
+  context: string | null;
+}
+
+export function validateEntity(input: unknown): ValidatedEntity | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+  const obj = input as Record<string, unknown>;
+  if (typeof obj.name !== "string") return null;
+  const name = obj.name.trim();
+  if (name.length === 0) return null;
+
+  if (typeof obj.type !== "string") return null;
+  const typeStr = obj.type.toLowerCase().trim();
+  if (!(VALID_ENTITY_TYPES as readonly string[]).includes(typeStr)) {
+    return null;
+  }
+  const type = typeStr as EntityType;
+
+  let context: string | null = null;
+  if (typeof obj.context === "string") {
+    const trimmed = obj.context.trim();
+    context = trimmed.length > 0 ? trimmed.slice(0, 500) : null;
+  }
+
+  return {
+    name: name.slice(0, 200),
+    type,
+    context,
+  };
+}
+
+export function sanitizeEntities(rawList: unknown[]): ValidatedEntity[] {
+  if (!Array.isArray(rawList)) return [];
+  const seen = new Set<string>();
+  const results: ValidatedEntity[] = [];
+
+  for (const item of rawList) {
+    const valid = validateEntity(item);
+    if (!valid) continue;
+    const key = `${valid.type}:${valid.name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(valid);
+  }
+
+  return results;
+}
+
+export function extractEntitiesFromShortText(text: string): ValidatedEntity[] {
+  if (!text || typeof text !== "string") return [];
+  const entities: ValidatedEntity[] = [];
+
+  const peoplePatterns = [
+    /(?:met with|talked to|spoke with|chatted with|called)\s+([A-Z][a-zA-Z0-9_'-]+)/gi,
+    /([A-Z][a-zA-Z0-9_'-]+)\s+said/gi,
+  ];
+  for (const rx of peoplePatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = rx.exec(text)) !== null) {
+      const name = match[1].trim();
+      if (name) {
+        entities.push({
+          name,
+          type: "person",
+          context: match[0],
+        });
+      }
+    }
+  }
+
+  const projectPatterns = [
+    /\bproject\s+([A-Z][a-zA-Z0-9_'-]+)\b/gi,
+    /\b([A-Z][a-zA-Z0-9_'-]+)\s+project\b/gi,
+  ];
+  for (const rx of projectPatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = rx.exec(text)) !== null) {
+      const name = match[1].trim();
+      if (name && name.toLowerCase() !== "the" && name.toLowerCase() !== "this") {
+        entities.push({
+          name,
+          type: "project",
+          context: match[0],
+        });
+      }
+    }
+  }
+
+  return sanitizeEntities(entities);
+}
+
 export function sanitizeClassification(
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -232,25 +339,47 @@ export function sanitizeClassification(
 
   const title = typeof raw.title === "string" ? raw.title.slice(0, 60) : null;
 
+  const rawEntities = Array.isArray(raw.entities) ? raw.entities : [];
+  let entities = sanitizeEntities(rawEntities);
+
+  if (entities.length === 0 && people.length > 0) {
+    entities = sanitizeEntities(
+      people.map((p) => ({ name: p, type: "person" as EntityType, context: null })),
+    );
+  }
+
   return {
     category,
     tags,
     people,
     importance,
     title,
-    dates_mentioned: raw.dates_mentioned || [],
+    dates_mentioned: Array.isArray(raw.dates_mentioned)
+      ? (raw.dates_mentioned as unknown[]).map(String).filter(Boolean)
+      : [],
+    entities,
   };
 }
 
 export function simpleClassify(text: string): Record<string, unknown> {
   const lower = text.toLowerCase();
+  const shortTextEntities = extractEntitiesFromShortText(text);
+  const peopleFromEntities = [
+    ...new Set(
+      shortTextEntities
+        .filter((e) => e.type === "person")
+        .map((e) => e.name),
+    ),
+  ];
+
   const defaults = {
     category: "note",
     tags: [],
     importance: 5,
     title: null,
-    people: [],
+    people: peopleFromEntities,
     dates_mentioned: [],
+    entities: shortTextEntities,
   };
 
   const rules: Array<[RegExp, string, string[], number?]> = [
@@ -278,7 +407,11 @@ export function simpleClassify(text: string): Record<string, unknown> {
 
   for (const [pattern, category, tags] of rules) {
     if (pattern.test(lower)) {
-      return { ...defaults, category, tags };
+      return {
+        ...defaults,
+        category,
+        tags: [...new Set([...defaults.tags, ...tags])],
+      };
     }
   }
 
@@ -302,7 +435,7 @@ export function recordToText(
   switch (type) {
     case "steps":
       return `On ${date}, walked ${formatNum(record.numeric_value)} steps${
-        record.duration_s
+        record.duration_s != null
           ? ` over ${Math.round((record.duration_s as number) / 60)} minutes`
           : ""
       }`;
@@ -338,7 +471,7 @@ export function recordToText(
       if (record.numeric_value != null) {
         parts.push(`value: ${record.numeric_value}`);
       }
-      if (record.duration_s) {
+      if (record.duration_s != null) {
         parts.push(
           `duration: ${Math.round((record.duration_s as number) / 60)}min`,
         );
@@ -349,34 +482,123 @@ export function recordToText(
   }
 }
 
+function formatExercise(e: Record<string, unknown>): string {
+  const name = String(e.name || "Exercise").trim();
+  if (Array.isArray(e.sets)) {
+    const formattedSets = e.sets.map((s: unknown) => {
+      if (!s || typeof s !== "object") return "";
+      const setObj = s as Record<string, unknown>;
+      const reps = setObj.reps != null ? `${setObj.reps}` : "";
+      const weight = setObj.weight_kg != null ? `@${setObj.weight_kg}kg` : "";
+      const dur = setObj.duration_s != null ? `${setObj.duration_s}s` : "";
+      const rir = setObj.rir != null ? `rir:${setObj.rir}` : "";
+      const warmup = setObj.is_warmup ? "(warmup)" : "";
+
+      let main = "";
+      if (reps && weight) {
+        main = `${reps}${weight}`;
+      } else if (reps) {
+        main = `${reps} reps`;
+      } else if (weight) {
+        main = `${weight}`;
+      } else if (dur) {
+        main = dur;
+      }
+
+      return [main, dur && main !== dur ? dur : "", rir, warmup]
+        .filter(Boolean)
+        .join(" ");
+    }).filter(Boolean);
+
+    if (formattedSets.length > 0) {
+      return `${name} (${formattedSets.join(", ")})`;
+    }
+    return name;
+  }
+
+  const sets = e.sets != null ? `${e.sets}x` : "";
+  const reps = e.reps != null ? `${e.reps}` : "";
+  const weight = e.weight_kg != null ? `@${e.weight_kg}kg` : "";
+  const dist = e.distance_km != null ? ` ${e.distance_km}km` : "";
+  const dur = e.duration_s != null ? ` ${e.duration_s}s` : "";
+  const rpe = e.rpe != null ? ` RPE ${e.rpe}` : "";
+  return `${name} ${sets}${reps}${weight}${dist}${dur}${rpe}`.trim();
+}
+
 export function workoutToText(record: Record<string, unknown>): string {
-  const date = record.workout_date as string || "unknown date";
-  const name = record.name as string || "Workout";
-  const type = record.workout_type as string || "other";
+  const date = (record.workout_date as string) || "unknown date";
+  const name = (record.name as string) || "Workout";
+  const type = (record.workout_type as string) || "other";
   const exercises = record.exercises as
     | Array<Record<string, unknown>>
     | undefined;
 
   const parts = [`${type} workout '${name}' on ${date}`];
-  if (exercises?.length) {
-    const exStr = exercises.map((e) => {
-      const sets = e.sets != null ? `${e.sets}x` : "";
-      const reps = e.reps != null ? `${e.reps}` : "";
-      const weight = e.weight_kg != null ? `@${e.weight_kg}kg` : "";
-      return `${e.name} ${sets}${reps}${weight}`.trim();
-    }).join(", ");
-    parts.push(exStr);
-  }
-  if (record.volume_kg != null) {
-    parts.push(`total volume ${record.volume_kg}kg`);
-  }
-  if (record.numeric_value != null) parts.push(`value ${record.numeric_value}`);
-  if (record.rpe != null) parts.push(`RPE ${record.rpe}`);
-  if (record.duration_s) {
-    parts.push(`duration ${Math.round((record.duration_s as number) / 60)}min`);
+  if (exercises && Array.isArray(exercises) && exercises.length > 0) {
+    const exStrs = exercises.map(formatExercise).filter(Boolean);
+    if (exStrs.length > 0) {
+      parts.push(exStrs.join(", "));
+    }
   }
 
-  return parts.join(": ") + (exercises?.length ? "" : "");
+  if (record.volume_kg != null && record.volume_kg !== "") {
+    parts.push(`total volume ${record.volume_kg}kg`);
+  }
+  if (record.numeric_value != null && record.numeric_value !== "") {
+    parts.push(`value ${record.numeric_value}`);
+  }
+  if (record.rpe != null && record.rpe !== "") {
+    parts.push(`RPE ${record.rpe}`);
+  }
+  if (record.duration_s != null && record.duration_s !== "") {
+    const durNum = Number(record.duration_s);
+    if (!Number.isNaN(durNum)) {
+      parts.push(`duration ${Math.round(durNum / 60)}min`);
+    }
+  }
+
+  if (
+    record.notes != null &&
+    typeof record.notes === "string" &&
+    record.notes.trim().length > 0
+  ) {
+    parts.push(`notes: ${record.notes.trim()}`);
+  }
+
+  if (record.tags != null && Array.isArray(record.tags)) {
+    const tags = normalizeStringArray(record.tags, { lowercase: true });
+    if (tags.length > 0) {
+      parts.push(`tags: ${tags.join(", ")}`);
+    }
+  }
+
+  return parts.join(": ");
+}
+
+export async function computeWorkoutContentHash(
+  record: Record<string, unknown>,
+): Promise<string> {
+  const canonical = JSON.stringify({
+    workout_date: String(record.workout_date || "").trim(),
+    workout_type: String(record.workout_type || "").trim().toLowerCase(),
+    name: String(record.name || "").trim(),
+    duration_s: record.duration_s != null ? Number(record.duration_s) : null,
+    volume_kg: record.volume_kg != null ? Number(record.volume_kg) : null,
+    numeric_value: record.numeric_value != null
+      ? Number(record.numeric_value)
+      : null,
+    rpe: record.rpe != null ? Number(record.rpe) : null,
+    notes: typeof record.notes === "string" ? record.notes.trim() : null,
+    tags: normalizeStringArray(record.tags, { lowercase: true }),
+    exercises: record.exercises || [],
+  });
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export function briefToText(record: Record<string, unknown>): string {

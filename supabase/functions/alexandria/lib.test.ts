@@ -4,14 +4,19 @@ import {
   briefToText,
   computeBodyCompDelta,
   computeBriefContentHash,
+  computeWorkoutContentHash,
   extractBodyCompMetrics,
+  extractEntitiesFromShortText,
   formatBodyCompSummary,
   normalizeBriefBody,
   normalizeStringArray,
   recordToText,
   sanitizeClassification,
+  sanitizeEntities,
   simpleClassify,
   VALID_CATEGORIES,
+  VALID_ENTITY_TYPES,
+  validateEntity,
   workoutToText,
 } from "./lib.ts";
 
@@ -502,4 +507,252 @@ Deno.test("briefToText includes metadata and markdown body for semantic indexing
   assertEquals(result.includes("projects: wyde"), true);
   assertEquals(result.includes("entities: Intmax"), true);
   assertEquals(result.includes("## Talking Points"), true);
+});
+
+// --- Entity validation and sanitizeClassification entity preservation ---
+
+Deno.test("VALID_ENTITY_TYPES has 8 canonical entity types", () => {
+  assertEquals(VALID_ENTITY_TYPES.length, 8);
+  assertEquals(VALID_ENTITY_TYPES.includes("person"), true);
+  assertEquals(VALID_ENTITY_TYPES.includes("project"), true);
+  assertEquals(VALID_ENTITY_TYPES.includes("technology"), true);
+});
+
+Deno.test("validateEntity validates well-formed entities and rejects malformed ones", () => {
+  // Valid
+  const valid = validateEntity({
+    name: " Alexandria ",
+    type: "project",
+    context: " working on alexandria ",
+  });
+  assertEquals(valid, {
+    name: "Alexandria",
+    type: "project",
+    context: "working on alexandria",
+  });
+
+  // Malformed - missing name or empty name
+  assertEquals(validateEntity({ type: "person" }), null);
+  assertEquals(validateEntity({ name: "", type: "person" }), null);
+  assertEquals(validateEntity({ name: "   ", type: "person" }), null);
+  assertEquals(validateEntity({ name: 123, type: "person" }), null);
+
+  // Malformed - invalid or missing type
+  assertEquals(validateEntity({ name: "Alexandria" }), null);
+  assertEquals(validateEntity({ name: "Alexandria", type: "not_a_valid_type" }), null);
+  assertEquals(validateEntity({ name: "Alexandria", type: 123 }), null);
+
+  // Malformed - non-object or null
+  assertEquals(validateEntity(null), null);
+  assertEquals(validateEntity(undefined), null);
+  assertEquals(validateEntity("string"), null);
+  assertEquals(validateEntity([]), null);
+});
+
+Deno.test("sanitizeEntities deduplicates by type and case-insensitive name", () => {
+  const raw = [
+    { name: "PostgreSQL", type: "technology", context: "used postgres" },
+    { name: "postgresql", type: "technology", context: "different context" },
+    { name: "PostgreSQL", type: "concept" }, // different type is allowed
+    { name: "", type: "person" }, // malformed
+    null,
+  ];
+  const results = sanitizeEntities(raw);
+  assertEquals(results.length, 2);
+  assertEquals(results[0], {
+    name: "PostgreSQL",
+    type: "technology",
+    context: "used postgres",
+  });
+  assertEquals(results[1], {
+    name: "PostgreSQL",
+    type: "concept",
+    context: null,
+  });
+});
+
+Deno.test("sanitizeClassification preserves validated entities and drops malformed", () => {
+  const raw = {
+    category: "idea",
+    importance: 8,
+    entities: [
+      { name: "TypeScript", type: "technology" },
+      { name: "typescript", type: "technology" }, // dup
+      { name: "", type: "technology" }, // malformed
+      { type: "technology" }, // malformed
+    ],
+  };
+  const result = sanitizeClassification(raw);
+  assertEquals(Array.isArray(result.entities), true);
+  const entities = result.entities as Array<{ name: string; type: string }>;
+  assertEquals(entities.length, 1);
+  assertEquals(entities[0].name, "TypeScript");
+  assertEquals(entities[0].type, "technology");
+});
+
+Deno.test("short-text extraction policy extracts entities from text patterns", () => {
+  const text = "Met with Sarah and discussed the Alexandria project";
+  const entities = extractEntitiesFromShortText(text);
+  assertEquals(entities.some((e) => e.name === "Sarah" && e.type === "person"), true);
+  assertEquals(entities.some((e) => e.name === "Alexandria" && e.type === "project"), true);
+
+  const text2 = "Bob said we should ship by Friday";
+  const entities2 = extractEntitiesFromShortText(text2);
+  assertEquals(entities2.some((e) => e.name === "Bob" && e.type === "person"), true);
+});
+
+Deno.test("simpleClassify applies short-text entity extraction policy", () => {
+  const result = simpleClassify("Met with Sarah about the roadmap");
+  assertEquals(result.category, "note");
+  assertEquals((result.people as string[]).includes("Sarah"), true);
+  const entities = result.entities as Array<{ name: string; type: string }>;
+  assertExists(entities);
+  assertEquals(entities.some((e) => e.name === "Sarah" && e.type === "person"), true);
+});
+
+// --- workoutToText: nested sets, zero preservation, notes/tags, and indexed fields only ---
+
+Deno.test("workoutToText formats real nested sets from Iron Log", () => {
+  const workout = {
+    workout_date: "2026-09-10",
+    workout_type: "strength",
+    name: "Bench & OHP",
+    exercises: [
+      {
+        name: "Bench Press",
+        sets: [
+          { set_number: 1, weight_kg: 80, reps: 8, duration_s: null, rir: 2, is_warmup: false },
+          { set_number: 2, weight_kg: 85, reps: 6, duration_s: null, rir: 0, is_warmup: false },
+          { set_number: 3, weight_kg: 50, reps: 10, duration_s: null, rir: 4, is_warmup: true },
+        ],
+      },
+    ],
+  };
+  const result = workoutToText(workout);
+  assertEquals(result.includes("Bench Press"), true);
+  assertEquals(result.includes("8@80kg"), true);
+  assertEquals(result.includes("6@85kg"), true);
+  assertEquals(result.includes("warmup"), true);
+});
+
+Deno.test("workoutToText normalizers do not lose zero values", () => {
+  const workout = {
+    workout_date: "2026-09-10",
+    workout_type: "strength",
+    name: "Bodyweight & Core",
+    duration_s: 0,
+    volume_kg: 0,
+    numeric_value: 0,
+    rpe: 0,
+    exercises: [
+      {
+        name: "Pull-ups",
+        sets: [
+          { set_number: 1, weight_kg: 0, reps: 10, rir: 0, is_warmup: false },
+        ],
+      },
+      {
+        name: "Plank",
+        sets: 1,
+        reps: 0,
+        weight_kg: 0,
+      },
+    ],
+  };
+  const result = workoutToText(workout);
+  assertEquals(result.includes("duration 0min"), true);
+  assertEquals(result.includes("total volume 0kg"), true);
+  assertEquals(result.includes("value 0"), true);
+  assertEquals(result.includes("RPE 0"), true);
+  assertEquals(result.includes("@0kg"), true);
+});
+
+Deno.test("workoutToText includes notes and normalized tags", () => {
+  const workout = {
+    workout_date: "2026-09-10",
+    workout_type: "strength",
+    name: "Heavy Legs",
+    notes: "Shoulder felt good today, hit new PR",
+    tags: [" Iron-Log ", "STRENGTH", "legs", "iron-log"],
+  };
+  const result = workoutToText(workout);
+  assertEquals(result.includes("notes: Shoulder felt good today, hit new PR"), true);
+  assertEquals(result.includes("tags: iron-log, strength, legs"), true);
+});
+
+Deno.test("workoutToText document changes ONLY when indexed fields change", () => {
+  const base = {
+    workout_date: "2026-09-10",
+    workout_type: "strength",
+    name: "Upper Body",
+    exercises: [{ name: "Bench Press", sets: 3, reps: 8, weight_kg: 80 }],
+    duration_s: 3600,
+    volume_kg: 1920,
+    numeric_value: 1920,
+    rpe: 8,
+    notes: "Solid session",
+    tags: ["strength", "upper"],
+    // Non-indexed / provenance / runtime fields:
+    id: "uuid-1234",
+    user_id: "user-5678",
+    created_at: "2026-09-10T10:00:00Z",
+    updated_at: "2026-09-10T10:00:00Z",
+    external_id: "ironlog-session-99",
+    embedding: [0.1, 0.2, 0.3],
+    metadata: { source: "iron-log", device: "pixel-8" },
+  };
+
+  const textBase = workoutToText(base);
+
+  // Changing non-indexed fields should NOT change the document
+  const modifiedNonIndexed = {
+    ...base,
+    id: "uuid-9999",
+    user_id: "user-9999",
+    created_at: "2026-09-11T12:00:00Z",
+    updated_at: "2026-09-11T12:00:00Z",
+    external_id: "different-external-id",
+    embedding: [0.9, 0.9, 0.9],
+    metadata: { completely: "different" },
+  };
+  assertEquals(workoutToText(modifiedNonIndexed), textBase);
+
+  // Changing any indexed field SHOULD change the document
+  assertEquals(workoutToText({ ...base, name: "Upper Body B" }) !== textBase, true);
+  assertEquals(workoutToText({ ...base, workout_date: "2026-09-11" }) !== textBase, true);
+  assertEquals(workoutToText({ ...base, notes: "Changed notes" }) !== textBase, true);
+  assertEquals(workoutToText({ ...base, tags: ["strength", "upper", "pr"] }) !== textBase, true);
+  assertEquals(workoutToText({ ...base, duration_s: 1800 }) !== textBase, true);
+  assertEquals(workoutToText({ ...base, volume_kg: 2000 }) !== textBase, true);
+  assertEquals(workoutToText({ ...base, rpe: 9 }) !== textBase, true);
+});
+
+Deno.test("computeWorkoutContentHash is deterministic and changes only when indexed fields change", async () => {
+  const row = {
+    workout_date: "2026-09-10",
+    workout_type: "strength",
+    name: "Push",
+    notes: "Good session",
+    tags: ["push", "strength"],
+    duration_s: 3600,
+    volume_kg: 2500,
+    rpe: 8,
+    id: "id-1",
+    created_at: "2026-09-10T00:00:00Z",
+  };
+
+  const hash1 = await computeWorkoutContentHash(row);
+  const hash2 = await computeWorkoutContentHash({
+    ...row,
+    id: "id-2",
+    created_at: "2026-09-11T00:00:00Z",
+  });
+
+  assertEquals(hash1, hash2);
+
+  const hash3 = await computeWorkoutContentHash({
+    ...row,
+    notes: "Different notes",
+  });
+  assertEquals(hash1 === hash3, false);
 });
