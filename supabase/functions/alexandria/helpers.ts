@@ -1,78 +1,55 @@
+import { supabase } from "./config.ts";
 import {
-  CLASSIFICATION_MODEL,
-  EMBEDDING_MODEL,
-  OPENROUTER_API_KEY,
-  OPENROUTER_BASE,
-  supabase,
-} from "./config.ts";
-import { sanitizeClassification, VALID_CATEGORIES } from "./lib.ts";
+  sanitizeEntities,
+  VALID_CATEGORIES,
+  VALID_ENTITY_TYPES,
+  type ValidatedEntity,
+} from "./lib.ts";
+import {
+  type ClassificationResult,
+  type ClassificationStatus,
+  type ErrorClass,
+  OpenRouterProvider,
+  type ProviderConfig,
+  ProviderAuthError,
+  ProviderError,
+  ProviderMalformedResponseError,
+  ProviderRateLimitError,
+  ProviderServerError,
+  ProviderTimeoutError,
+  ProviderTransportError,
+} from "./provider.ts";
 import type { EntityType } from "./types.ts";
 
-export async function getEmbedding(text: string): Promise<number[]> {
-  const r = await fetch(`${OPENROUTER_BASE}/embeddings`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input: text,
-    }),
-  });
-  if (!r.ok) {
-    await r.text().catch(() => "");
-    throw new Error("Embedding generation failed");
-  }
-  const d = await r.json();
-  return d.data[0].embedding;
+export {
+  type ClassificationResult,
+  type ClassificationStatus,
+  type ErrorClass,
+  OpenRouterProvider,
+  type ProviderConfig,
+  ProviderAuthError,
+  ProviderError,
+  ProviderMalformedResponseError,
+  ProviderRateLimitError,
+  ProviderServerError,
+  ProviderTimeoutError,
+  ProviderTransportError,
+};
+
+const defaultProvider = new OpenRouterProvider();
+
+export async function getEmbedding(
+  text: string,
+  provider: OpenRouterProvider = defaultProvider,
+): Promise<number[]> {
+  return await provider.getEmbedding(text);
 }
 
 export async function classifyMemory(
   text: string,
-): Promise<Record<string, unknown>> {
-  const defaults = {
-    category: "note",
-    tags: ["uncategorized"],
-    importance: 5,
-    title: "Untitled",
-    people: [],
-    dates_mentioned: [],
-  };
-  try {
-    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: CLASSIFICATION_MODEL,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `Classify this memory. Return JSON with:
-- "category": one of ${JSON.stringify([...VALID_CATEGORIES])}
-- "tags": array of 1-5 short lowercase tags
-- "people": array of people mentioned (empty if none)
-- "dates_mentioned": array of dates as YYYY-MM-DD (empty if none)
-- "importance": 1-10 (1=trivial, 10=critical life event)
-- "title": short descriptive title (max 60 chars)
-- "entities": array of objects with "name" (string), "type" (one of: person, project, concept, location, technology, organization, event, other), "context" (the sentence or phrase where the entity was mentioned)
-Only extract what is explicitly present.`,
-          },
-          { role: "user", content: text },
-        ],
-      }),
-    });
-    if (!r.ok) return defaults;
-    const d = await r.json();
-    const parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}");
-    return sanitizeClassification(parsed);
-  } catch {
-    return defaults;
-  }
+  provider: OpenRouterProvider = defaultProvider,
+): Promise<ClassificationResult> {
+  return await provider.classifyMemory(text);
 }
 
 export function err(msg: string) {
@@ -100,18 +77,7 @@ export function wrapHandler<Args>(fn: (input: Args) => Promise<string>) {
   };
 }
 
-const VALID_ENTITY_TYPES = [
-  "person",
-  "project",
-  "concept",
-  "location",
-  "technology",
-  "organization",
-  "event",
-  "other",
-] as const;
-
-function coerceEntityType(value: unknown): EntityType {
+export function coerceEntityType(value: unknown): EntityType {
   return typeof value === "string" &&
       (VALID_ENTITY_TYPES as readonly string[]).includes(value)
     ? (value as EntityType)
@@ -122,19 +88,7 @@ export async function processEntities(
   memoryId: string,
   rawEntities: unknown[],
 ) {
-  const validEntities = rawEntities
-    .filter((e: unknown) => {
-      const obj = e as Record<string, unknown>;
-      return obj?.name && obj?.type;
-    })
-    .map((e: unknown) => {
-      const obj = e as Record<string, unknown>;
-      return {
-        name: String(obj.name).trim().slice(0, 200),
-        type: coerceEntityType(obj.type),
-        context: obj.context ? String(obj.context).slice(0, 500) : null,
-      };
-    });
+  const validEntities = sanitizeEntities(rawEntities);
 
   for (const ent of validEntities) {
     const { data: existing, error: lookupErr } = await supabase

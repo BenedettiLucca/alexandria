@@ -17,6 +17,18 @@ export const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") ||
   "openai/text-embedding-3-small";
 export const CLASSIFICATION_MODEL = Deno.env.get("CLASSIFICATION_MODEL") ||
   "openai/gpt-4o-mini";
+export const PROVIDER_TOTAL_DEADLINE_MS = Number(
+  Deno.env.get("PROVIDER_TOTAL_DEADLINE_MS") || "8000",
+);
+export const PROVIDER_PER_ATTEMPT_TIMEOUT_MS = Number(
+  Deno.env.get("PROVIDER_PER_ATTEMPT_TIMEOUT_MS") || "4000",
+);
+export const PROVIDER_MAX_RETRIES = Number(
+  Deno.env.get("PROVIDER_MAX_RETRIES") || "2",
+);
+export const PROVIDER_INITIAL_BACKOFF_MS = Number(
+  Deno.env.get("PROVIDER_INITIAL_BACKOFF_MS") || "100",
+);
 export const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") || "").split(
   ",",
 ).filter(Boolean);
