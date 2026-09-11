@@ -44,8 +44,10 @@ else
     echo "--- 3.3 Deno unit suite (existente) ---"
     SUPABASE_URL=http://localhost:5432 \
     SUPABASE_SERVICE_ROLE_KEY=test-key \
+    SUPABASE_ANON_KEY=test-anon-key \
     LOCAL_SUPABASE_URL=http://localhost:5432 \
     LOCAL_SUPABASE_SERVICE_ROLE_KEY=test-key \
+    LOCAL_SUPABASE_ANON_KEY=test-anon-key \
     MCP_ACCESS_KEY=test \
     OPENROUTER_API_KEY=test \
     deno test --allow-all --no-check
