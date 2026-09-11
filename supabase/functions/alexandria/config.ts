@@ -8,6 +8,7 @@ export const SUPABASE_SERVICE_ROLE_KEY =
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 export const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
 export const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY")!;
+export const OWNER_USER_ID = Deno.env.get("ALEXANDRIA_OWNER_USER_ID")?.trim() || null;
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 export const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") ||
   "openai/text-embedding-3-small";

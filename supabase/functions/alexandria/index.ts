@@ -8,12 +8,13 @@ import {
   AuthContext,
   getCorsHeaders,
   MCP_ACCESS_KEY,
+  OWNER_USER_ID,
   supabase,
   SUPABASE_URL,
   timingSafeEqual,
 } from "./config.ts";
 import { getAuth, runWithContext } from "./context.ts";
-import { recordToolCall } from "./telemetry.ts";
+import { recordToolCall, recordToolCallBounded } from "./telemetry.ts";
 
 import { registerMemoriesTools } from "./tools/memories.ts";
 import { registerBriefsTools } from "./tools/briefs.ts";
@@ -45,20 +46,20 @@ server.registerTool = ((
     const startedAt = performance.now();
     try {
       const result = await cb(args, extra);
-      recordToolCall({
+      await recordToolCallBounded(recordToolCall({
         toolName: name,
         args,
         success: (result as CallToolResult | undefined)?.isError !== true,
         latencyMs: performance.now() - startedAt,
-      });
+      }));
       return result;
     } catch (error) {
-      recordToolCall({
+      await recordToolCallBounded(recordToolCall({
         toolName: name,
         args,
         success: false,
         latencyMs: performance.now() - startedAt,
-      });
+      }));
       throw error;
     }
   };
@@ -156,6 +157,7 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
     try {
       const { data: { user }, error } = await supabase.auth.getUser(token);
       if (!error && user) {
+        if (!OWNER_USER_ID || user.id !== OWNER_USER_ID) return null;
         return {
           method: "jwt",
           userId: user.id,
@@ -167,8 +169,7 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
     }
   }
 
-  const keyProvided = c.req.header("x-brain-key") ||
-    new URL(c.req.url).searchParams.get("key");
+  const keyProvided = c.req.header("x-brain-key");
 
   if (keyProvided && timingSafeEqual(keyProvided, MCP_ACCESS_KEY)) {
     return { method: "key", userId: "service-role" };
