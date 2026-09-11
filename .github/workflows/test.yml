@@ -8,7 +8,7 @@ on:
 
 jobs:
   python-tests:
-    name: Python Tests
+    name: Python Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -33,8 +33,33 @@ jobs:
           name: python-coverage
           path: coverage.xml
 
+  integration-tests:
+    name: Integration Tests (Local Supabase)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+
+      - name: Start Supabase Local Stack
+        run: supabase start
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Integration Tests
+        run: |
+          python -m pytest tests/integration -v
+
   deno-tests:
-    name: Deno Tests
+    name: Deno Tests & Typed Gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -43,7 +68,22 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Run tests
+      - name: Type check index.ts
+        working-directory: supabase/functions/alexandria
+        run: deno check index.ts
+
+      - name: Run typed test (tools/telemetry.test.ts)
+        working-directory: supabase/functions/alexandria
+        run: deno test --allow-all tools/telemetry.test.ts
+        env:
+          SUPABASE_URL: http://localhost:5432
+          SUPABASE_SERVICE_ROLE_KEY: test-key
+          LOCAL_SUPABASE_URL: http://localhost:5432
+          LOCAL_SUPABASE_SERVICE_ROLE_KEY: test-key
+          MCP_ACCESS_KEY: test
+          OPENROUTER_API_KEY: test
+
+      - name: Run all Deno tests
         working-directory: supabase/functions/alexandria
         run: deno test --allow-all .
         env:
@@ -53,7 +93,3 @@ jobs:
           LOCAL_SUPABASE_SERVICE_ROLE_KEY: test-key
           MCP_ACCESS_KEY: test
           OPENROUTER_API_KEY: test
-
-      - name: Type check
-        working-directory: supabase/functions/alexandria
-        run: deno check index.ts
