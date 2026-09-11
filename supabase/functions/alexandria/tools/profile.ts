@@ -23,16 +23,9 @@ export function registerProfileTools(
     wrapHandler(async ({ key }) => {
       const auth = getAuth();
       const client = supabase;
-      const isJwt = auth?.method === "jwt";
-      const qBase = isJwt
-        ? client.from("profile").select("key, value, updated_at").eq(
-          "owner_id",
-          auth.userId,
-        )
-        : client.from("profile").select("key, value, updated_at").is(
-          "owner_id",
-          null,
-        );
+      if (!auth) throw new Error("Not authenticated.");
+      const qBase = client.from("profile").select("key, value, updated_at")
+        .eq("owner_id", auth.userId);
       if (key) {
         const { data, error } = await qBase.eq("key", key).single();
         if (error) throw new Error(`Profile key "${key}" not found.`);
@@ -73,25 +66,17 @@ export function registerProfileTools(
     },
     wrapHandler(async ({ key, value }) => {
       const auth = getAuth();
-      const client = supabase;
-      const isJwt = auth?.method === "jwt";
-      const ownerFilter = isJwt
-        ? { owner_id: auth!.userId }
-        : { owner_id: null };
+      if (!auth) throw new Error("Not authenticated.");
 
-      const row = {
-        key,
-        value,
-        updated_at: new Date().toISOString(),
-        ...ownerFilter,
-      };
+      const { data, error } = await supabase.rpc("upsert_profile", {
+        p_key: key,
+        p_value: value,
+        p_owner_id: auth.userId,
+      });
+      if (error) throw new Error(error.message);
+      if (!data?.id || !data?.status) throw new Error("Profile update failed");
 
-      const { error } = await client
-        .from("profile")
-        .upsert(row, { onConflict: isJwt ? "key,owner_id" : "key" });
-
-      if (error) throw new Error("Profile update failed");
-      return `Profile "${key}" saved.`;
+      return `Profile "${data.key ?? key}" ${data.status}.`;
     }),
   );
 
@@ -114,20 +99,16 @@ export function registerProfileTools(
       ];
       if (auth.email) lines.push(`Email: ${auth.email}`);
 
-      if (auth.method === "jwt") {
-        const client = supabase;
-        const { data: profileKeys, error } = await client
-          .from("profile")
-          .select("key")
-          .eq("owner_id", auth.userId)
-          .order("key");
+      const { data: profileKeys, error } = await supabase
+        .from("profile")
+        .select("key")
+        .eq("owner_id", auth.userId)
+        .order("key");
+      if (error) throw new Error(error.message);
 
-        if (!error && profileKeys?.length) {
-          lines.push("", "Profile sections:");
-          profileKeys.forEach((p: { key: string }) =>
-            lines.push(`  - ${p.key}`)
-          );
-        }
+      if (profileKeys?.length) {
+        lines.push("", "Profile sections:");
+        profileKeys.forEach((p: { key: string }) => lines.push(`  - ${p.key}`));
       }
 
       return lines.join("\n");
