@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1.0.12";
 import { canonicalJson, paramsHash, sha256Hex } from "../telemetry.ts";
+import { activationReportInputSchema } from "./telemetry.ts";
 import { formatToolActivationReport } from "../lib.ts";
 import type { ToolActivationRow } from "../types.ts";
 
@@ -73,6 +74,18 @@ const neverRow: ToolActivationRow = {
   clients: [],
   trend: "never",
 };
+
+Deno.test("activation report days are bounded and documented", () => {
+  assertEquals(activationReportInputSchema.days.parse(7), 7);
+  assertEquals(activationReportInputSchema.days.parse(365), 365);
+  let rejected = false;
+  try {
+    activationReportInputSchema.days.parse(366);
+  } catch {
+    rejected = true;
+  }
+  assertEquals(rejected, true);
+});
 
 Deno.test("formatToolActivationReport empty rows", () => {
   const output = formatToolActivationReport([]);
