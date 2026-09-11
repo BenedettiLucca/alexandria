@@ -35,6 +35,7 @@ else
     echo "--- 3.2 Deno typed test (sem --no-check em tools/telemetry.test.ts) ---"
     SUPABASE_URL=http://localhost:5432 \
     SUPABASE_SERVICE_ROLE_KEY=test-key \
+    SUPABASE_ANON_KEY=test-anon-key \
     LOCAL_SUPABASE_URL=http://localhost:5432 \
     LOCAL_SUPABASE_SERVICE_ROLE_KEY=test-key \
     MCP_ACCESS_KEY=test \
