@@ -84,39 +84,52 @@ class TestDedupByExternalId:
 
 
 class TestUpsertRecord:
-    def test_insert_when_no_external_id(self):
+    def test_uses_health_entry_rpc_without_prelookup(self):
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [
-            {"id": "1"}
-        ]
-        record = {"name": "test"}
-        result = upsert_record(mock_supabase, "health_entries", record, "hc", None)
-        mock_supabase.table.return_value.insert.assert_called_once_with(record)
-        assert result.data == [{"id": "1"}]
-
-    def test_insert_when_external_id_and_no_existing(self):
-        mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
-        mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [
-            {"id": "2"}
-        ]
-        record = {"name": "test"}
+        mock_supabase.rpc.return_value.execute.return_value.data = {"status": "created"}
+        record = {"entry_type": "steps", "timestamp": "2024-01-01T00:00:00Z", "value": {"count": 1}}
         result = upsert_record(mock_supabase, "health_entries", record, "hc", "ext1")
-        mock_supabase.table.return_value.insert.assert_called_once_with(record)
-        assert result.data == [{"id": "2"}]
+        mock_supabase.rpc.assert_called_once_with(
+            "upsert_health_entry",
+            {
+                "p_entry_type": "steps",
+                "p_timestamp": "2024-01-01T00:00:00Z",
+                "p_value": {"count": 1},
+                "p_source": "hc",
+                "p_external_id": "ext1",
+            },
+        )
+        mock_supabase.table.assert_not_called()
+        assert result.data == {"status": "created"}
 
-    def test_update_when_external_id_and_existing(self):
+    def test_uses_brief_rpc_with_source_path(self):
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
-            {"id": "1"}
-        ]
-        mock_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
-            {"id": "1"}
-        ]
-        record = {"name": "updated"}
-        result = upsert_record(mock_supabase, "health_entries", record, "hc", "ext1")
-        mock_supabase.table.return_value.update.assert_called_once_with(record)
-        assert result.data == [{"id": "1"}]
+        record = {
+            "title": "Meeting",
+            "brief_date": "2024-01-01",
+            "kind": "meeting-room",
+            "body_markdown": "Body",
+            "source_job": "meetcap",
+            "content_hash": "hash",
+            "metadata": {"note_path": "meetings/a.md"},
+        }
+        upsert_record(mock_supabase, "briefs", record, "meetcap", "hash")
+        mock_supabase.rpc.assert_called_once_with(
+            "upsert_brief",
+            {
+                "p_title": "Meeting",
+                "p_brief_date": "2024-01-01",
+                "p_kind": "meeting-room",
+                "p_body_markdown": "Body",
+                "p_source_job": "meetcap",
+                "p_source_path": "meetings/a.md",
+                "p_topics": [],
+                "p_project_refs": [],
+                "p_entity_refs": [],
+                "p_metadata": {"note_path": "meetings/a.md"},
+                "p_content_hash": "hash",
+            },
+        )
 
 
 class TestRecordSync:
@@ -138,6 +151,19 @@ class TestRecordSync:
         call_args = mock_supabase.table.return_value.insert.call_args[0][0]
         assert call_args["status"] == "failed"
         assert call_args["error_message"] == "something went wrong"
+
+    def test_sets_status_partial_when_records_fail(self):
+        mock_supabase = MagicMock()
+        record_sync(mock_supabase, "health-connect", processed=4, imported=3, failed=1)
+        call_args = mock_supabase.table.return_value.insert.call_args[0][0]
+        assert call_args["status"] == "partial"
+
+    def test_sets_status_partial_when_tables_fail(self):
+        mock_supabase = MagicMock()
+        record_sync(mock_supabase, "health-connect", failed_tables=2)
+        call_args = mock_supabase.table.return_value.insert.call_args[0][0]
+        assert call_args["status"] == "partial"
+        assert call_args["metadata"] == {"failed_tables": 2}
 
     def test_catches_exception_gracefully(self, caplog):
         import logging
