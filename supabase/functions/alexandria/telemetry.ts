@@ -47,6 +47,18 @@ export async function recordToolCall(event: ToolCallEvent): Promise<void> {
       owner_id: ctx?.auth.userId ?? null,
     });
   } catch {
-    // Telemetry must never break the tool call it observes.
   }
+}
+
+export async function recordToolCallBounded(
+  operation: Promise<void>,
+  timeoutMs = 1500,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timeout = setTimeout(resolve, timeoutMs);
+  });
+  operation.catch(() => undefined);
+  await Promise.race([operation.catch(() => undefined), deadline]);
+  if (timeout !== undefined) clearTimeout(timeout);
 }
