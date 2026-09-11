@@ -6,7 +6,7 @@ import type { ProjectRow } from "../types.ts";
 
 export function registerProjectsTools(
   server: McpServer,
-  _getAuth: () => AuthContext | undefined,
+  getAuth: () => AuthContext | undefined,
 ) {
   server.registerTool(
     "list_projects",
@@ -20,9 +20,12 @@ export function registerProjectsTools(
       },
     },
     wrapHandler(async ({ status }) => {
+      const auth = getAuth();
+      if (!auth) throw new Error("Not authenticated.");
       let q = supabase
         .from("projects")
         .select("id, name, path, status, stack, created_at, updated_at")
+        .eq("user_id", auth.userId)
         .order("updated_at", { ascending: false, nullsFirst: false });
       if (status) q = q.eq("status", status);
       const { data, error } = await q.limit(20);
@@ -76,34 +79,22 @@ export function registerProjectsTools(
     },
     wrapHandler(
       async ({ name, path, description, stack, conventions, status }) => {
-        const update: Record<string, unknown> = {
-          name,
-          updated_at: new Date().toISOString(),
-        };
-        if (path !== undefined) update.path = path;
-        if (description !== undefined) update.description = description;
-        if (stack !== undefined) update.stack = stack;
-        if (conventions !== undefined) update.conventions = conventions;
-        if (status !== undefined) update.status = status;
+        const auth = getAuth();
+        if (!auth) throw new Error("Not authenticated.");
 
-        const { data: existing } = await supabase
-          .from("projects")
-          .select("id")
-          .eq("name", name)
-          .maybeSingle();
+        const { data, error } = await supabase.rpc("upsert_project", {
+          p_name: name,
+          p_path: path,
+          p_description: description,
+          p_stack: stack ?? [],
+          p_conventions: conventions ?? {},
+          p_status: status ?? "active",
+          p_user_id: auth.userId,
+        });
+        if (error) throw new Error(error.message);
+        if (!data?.id || !data?.status) throw new Error("Project save failed");
 
-        if (existing) {
-          const { error } = await supabase
-            .from("projects")
-            .update(update)
-            .eq("id", existing.id);
-          if (error) throw new Error("Project update failed");
-          return `Project "${name}" updated.`;
-        }
-
-        const { error } = await supabase.from("projects").insert(update);
-        if (error) throw new Error("Project creation failed");
-        return `Project "${name}" created.`;
+        return `Project "${name.trim()}" ${data.status}.`;
       },
     ),
   );
