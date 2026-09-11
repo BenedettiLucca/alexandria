@@ -1,0 +1,158 @@
+[
+  {
+    "contract_version": "health.v1",
+    "duration_s": null,
+    "entry_type": "body_composition",
+    "external_id": "hc-bc-1",
+    "identity": "health_connect:hc-bc-1",
+    "numeric_value": null,
+    "raw_content": {
+      "untrusted": true,
+      "value": {
+        "entry_type": "bodyComp",
+        "external_id": "hc-bc-1",
+        "source": "health_connect",
+        "timestamp": "2026-09-10T07:00:00Z",
+        "value": {
+          "body_fat_pct": 18.2,
+          "weight": 80.5
+        }
+      }
+    },
+    "source": "health_connect",
+    "timestamp": "2026-09-10T07:00:00Z",
+    "value": {
+      "body_fat_pct": 18.2,
+      "weight": 80.5
+    }
+  },
+  {
+    "contract_version": "health.v1",
+    "duration_s": null,
+    "entry_type": "exercise",
+    "external_id": "hc-ex-1",
+    "identity": "health_connect:hc-ex-1",
+    "numeric_value": null,
+    "raw_content": {
+      "untrusted": true,
+      "value": {
+        "entry_type": "exercise",
+        "external_id": "hc-ex-1",
+        "source": "health_connect",
+        "timestamp": "2026-09-10T06:00:00-03:00",
+        "value": {
+          "duration_seconds": 3600
+        }
+      }
+    },
+    "source": "health_connect",
+    "timestamp": "2026-09-10T06:00:00-03:00",
+    "value": {
+      "duration_s": 3600,
+      "duration_seconds": 3600
+    }
+  },
+  {
+    "contract_version": "health.v1",
+    "duration_s": null,
+    "entry_type": "heart_rate",
+    "external_id": "hc-hr-1",
+    "identity": "health_connect:hc-hr-1",
+    "numeric_value": null,
+    "raw_content": {
+      "untrusted": true,
+      "value": {
+        "entry_type": "hr",
+        "external_id": "hc-hr-1",
+        "source": "health_connect",
+        "timestamp": "2026-09-10T08:30:00-03:00",
+        "value": {
+          "beats_per_minute": 62
+        }
+      }
+    },
+    "source": "health_connect",
+    "timestamp": "2026-09-10T08:30:00-03:00",
+    "value": {
+      "beats_per_minute": 62,
+      "bpm": 62
+    }
+  },
+  {
+    "contract_version": "health.v1",
+    "duration_s": null,
+    "entry_type": "sleep",
+    "external_id": "hc-sleep-1",
+    "identity": "health_connect:hc-sleep-1",
+    "numeric_value": null,
+    "raw_content": {
+      "untrusted": true,
+      "value": {
+        "entry_type": "sleep",
+        "external_id": "hc-sleep-1",
+        "source": "health_connect",
+        "timestamp": "2026-09-09T23:10:00-03:00",
+        "value": {
+          "duration_h": 7.4
+        }
+      }
+    },
+    "source": "health_connect",
+    "timestamp": "2026-09-09T23:10:00-03:00",
+    "value": {
+      "duration_h": 7.4,
+      "duration_hours": 7.4
+    }
+  },
+  {
+    "contract_version": "health.v1",
+    "duration_s": null,
+    "entry_type": "steps",
+    "external_id": "hc-steps-1",
+    "identity": "health_connect:hc-steps-1",
+    "numeric_value": null,
+    "raw_content": {
+      "untrusted": true,
+      "value": {
+        "entry_type": "steps",
+        "external_id": "hc-steps-1",
+        "source": "health_connect",
+        "timestamp": "2026-09-10T00:00:00+00:00",
+        "value": {
+          "steps": 1234
+        }
+      }
+    },
+    "source": "health_connect",
+    "timestamp": "2026-09-10T00:00:00+00:00",
+    "value": {
+      "count": 1234,
+      "steps": 1234
+    }
+  },
+  {
+    "contract_version": "health.v1",
+    "duration_s": null,
+    "entry_type": "measurement_goal",
+    "external_id": "goal-1",
+    "identity": "manual:goal-1",
+    "numeric_value": null,
+    "raw_content": {
+      "untrusted": true,
+      "value": {
+        "entry_type": "measurement_goal",
+        "external_id": "goal-1",
+        "source": "manual",
+        "timestamp": "2026-09-01T00:00:00Z",
+        "value": {
+          "target_weight_kg": 78
+        }
+      }
+    },
+    "source": "manual",
+    "timestamp": "2026-09-01T00:00:00Z",
+    "value": {
+      "target_weight_kg": 78
+    }
+  }
+]

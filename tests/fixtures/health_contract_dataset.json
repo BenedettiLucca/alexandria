@@ -1,0 +1,57 @@
+[
+  {
+    "entry_type": "steps",
+    "timestamp": "2026-09-10T00:00:00+00:00",
+    "value": {
+      "steps": 1234
+    },
+    "source": "health_connect",
+    "external_id": "hc-steps-1"
+  },
+  {
+    "entry_type": "hr",
+    "timestamp": "2026-09-10T08:30:00-03:00",
+    "value": {
+      "beats_per_minute": 62
+    },
+    "source": "health_connect",
+    "external_id": "hc-hr-1"
+  },
+  {
+    "entry_type": "bodyComp",
+    "timestamp": "2026-09-10T07:00:00Z",
+    "value": {
+      "weight": 80.5,
+      "body_fat_pct": 18.2
+    },
+    "source": "health_connect",
+    "external_id": "hc-bc-1"
+  },
+  {
+    "entry_type": "sleep",
+    "timestamp": "2026-09-09T23:10:00-03:00",
+    "value": {
+      "duration_h": 7.4
+    },
+    "source": "health_connect",
+    "external_id": "hc-sleep-1"
+  },
+  {
+    "entry_type": "exercise",
+    "timestamp": "2026-09-10T06:00:00-03:00",
+    "value": {
+      "duration_seconds": 3600
+    },
+    "source": "health_connect",
+    "external_id": "hc-ex-1"
+  },
+  {
+    "entry_type": "measurement_goal",
+    "timestamp": "2026-09-01T00:00:00Z",
+    "value": {
+      "target_weight_kg": 78
+    },
+    "source": "manual",
+    "external_id": "goal-1"
+  }
+]
