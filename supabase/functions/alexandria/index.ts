@@ -15,6 +15,12 @@ import {
 } from "./config.ts";
 import { getAuth, runWithContext } from "./context.ts";
 import { recordToolCall, recordToolCallBounded } from "./telemetry.ts";
+import {
+  DEFAULT_EMBEDDING_SPACE,
+  EMBEDDING_DIMENSION,
+  preflightDimensionCheck,
+  preflightSpaceCheck,
+} from "./lifecycle.ts";
 
 import { registerMemoriesTools } from "./tools/memories.ts";
 import { registerBriefsTools } from "./tools/briefs.ts";
@@ -27,6 +33,11 @@ import { registerEntitiesTools } from "./tools/entities.ts";
 import { registerProofChainTools } from "./tools/proof_chain.ts";
 import { registerConflictRadarTools } from "./tools/conflict_radar.ts";
 import { registerTelemetryTools } from "./tools/telemetry.ts";
+import { registerIndexingTools } from "./tools/indexing.ts";
+
+// Cold start invariant preflight (self-check without paid API requests)
+preflightDimensionCheck(EMBEDDING_DIMENSION);
+preflightSpaceCheck(DEFAULT_EMBEDDING_SPACE);
 
 const OAUTH_SCOPE = "alexandria.access";
 const MCP_PUBLIC_URL = `${SUPABASE_URL}/functions/v1/alexandria`;
@@ -77,6 +88,7 @@ registerEntitiesTools(server, getAuth);
 registerProofChainTools(server, getAuth);
 registerConflictRadarTools(server, getAuth);
 registerTelemetryTools(server, getAuth);
+registerIndexingTools(server, getAuth);
 
 function getProtectedResourceMetadataUrl(): string {
   return `${MCP_PUBLIC_URL}?oauth_metadata=protected_resource`;
