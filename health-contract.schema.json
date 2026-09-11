@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "alexandria.health.v1",
+  "title": "Alexandria health entry contract",
+  "type": "object",
+  "required": ["entry_type", "timestamp"],
+  "properties": {
+    "entry_type": {"enum": ["steps", "weight", "heart_rate", "sleep", "exercise", "body_composition", "measurement_goal"]},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "duration_s": {"type": ["number", "null"], "minimum": 0},
+    "numeric_value": {"type": ["number", "null"]},
+    "value": {"type": ["object", "null"]},
+    "source": {"type": ["string", "null"]},
+    "external_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}
