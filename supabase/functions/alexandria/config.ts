@@ -6,6 +6,9 @@ export const SUPABASE_URL = Deno.env.get("LOCAL_SUPABASE_URL") ??
 export const SUPABASE_SERVICE_ROLE_KEY =
   Deno.env.get("LOCAL_SUPABASE_SERVICE_ROLE_KEY") ??
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+export const SUPABASE_ANON_KEY =
+  Deno.env.get("LOCAL_SUPABASE_ANON_KEY") ??
+    Deno.env.get("SUPABASE_ANON_KEY")!;
 export const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
 export const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY")!;
 export const OWNER_USER_ID = Deno.env.get("ALEXANDRIA_OWNER_USER_ID")?.trim() || null;
@@ -58,5 +61,6 @@ export function timingSafeEqual(a: string, b: string): boolean {
 export type AuthContext = {
   method: "jwt" | "key";
   userId: string;
+  token?: string;
   email?: string;
 };

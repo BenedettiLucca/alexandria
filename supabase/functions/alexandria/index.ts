@@ -161,6 +161,7 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
         return {
           method: "jwt",
           userId: user.id,
+          token,
           email: user.email || undefined,
         };
       }
@@ -172,7 +173,8 @@ async function authenticate(c: Context): Promise<AuthContext | null> {
   const keyProvided = c.req.header("x-brain-key");
 
   if (keyProvided && timingSafeEqual(keyProvided, MCP_ACCESS_KEY)) {
-    return { method: "key", userId: "service-role" };
+    if (!OWNER_USER_ID) return null;
+    return { method: "key", userId: OWNER_USER_ID };
   }
 
   return null;
