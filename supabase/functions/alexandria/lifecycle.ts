@@ -220,7 +220,7 @@ export class IndexingWorker {
     const { data, error } = await supabase.rpc("claim_indexing_jobs", {
       p_limit: cap,
       p_target_space: space,
-      p_owner_id: ownerId,
+      p_owner_id: ownerId ?? undefined,
       p_lock_seconds: 60,
     });
 
@@ -248,7 +248,7 @@ export class IndexingWorker {
       return {
         text: data.content,
         version: data.embedding_version,
-        content_hash: data.content_hash,
+        content_hash: data.content_hash ?? "",
       };
     } else if (table === "briefs") {
       const { data } = await supabase
@@ -260,7 +260,7 @@ export class IndexingWorker {
       return {
         text: briefToText({ title: data.title, body_markdown: data.body_markdown }),
         version: data.embedding_version,
-        content_hash: data.content_hash,
+        content_hash: data.content_hash ?? "",
       };
     } else if (table === "health_entries") {
       const { data } = await supabase
@@ -277,7 +277,7 @@ export class IndexingWorker {
           value: data.value,
         }),
         version: data.embedding_version,
-        content_hash: data.content_hash,
+        content_hash: data.content_hash ?? "",
       };
     } else if (table === "training_logs") {
       const { data } = await supabase
@@ -296,7 +296,7 @@ export class IndexingWorker {
           volume_kg: data.volume_kg,
         }),
         version: data.embedding_version,
-        content_hash: data.content_hash,
+        content_hash: data.content_hash ?? "",
       };
     }
     return null;
@@ -532,8 +532,8 @@ export class IndexingWorker {
     const { data, error } = await supabase.rpc("backfill_indexing_jobs", {
       p_space: options.space,
       p_budget_limit: Math.min(options.budget, 1000),
-      p_source_table: domain,
-      p_owner_id: ownerId,
+      p_source_table: domain ?? undefined,
+      p_owner_id: ownerId ?? undefined,
     });
 
     if (error) {
@@ -549,7 +549,7 @@ export class IndexingWorker {
   async getLifecycleStatus(authContext?: AuthContext | null): Promise<LifecycleStatus> {
     const ownerId = authContext?.userId || OWNER_USER_ID || null;
     const { data, error } = await supabase.rpc("get_indexing_lifecycle_status", {
-      p_owner_id: ownerId,
+      p_owner_id: ownerId ?? undefined,
     });
 
     if (error) {

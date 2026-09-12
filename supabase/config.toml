@@ -409,3 +409,6 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.alexandria]
 verify_jwt = false
+
+[functions.coverage-capture]
+verify_jwt = false
