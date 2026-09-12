@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
     connect_supabase,
-    dedup_by_external_id,
     upsert_record,
     record_sync,
 )
@@ -281,30 +280,18 @@ def import_meetcap_briefs(vault_dir, supabase):
             
             note_path = parsed["canonical_vault_path"]
             
-            # Dedup by content_hash as external_id
-            if dedup_by_external_id(supabase, "briefs", "meetcap", content_hash):
-                skipped += 1
-                continue
-            
-            # Check by note_path for content updates (same path, different hash)
-            existing_by_path = (
+            existing_by_hash = (
                 supabase.table("briefs")
-                .select("id, content_hash")
+                .select("id")
                 .eq("source_job", "meetcap")
-                .filter("metadata->>note_path", "eq", note_path)
-                .maybe_single()
+                .eq("content_hash", content_hash)
                 .execute()
             )
-            
-            existing_by_path_data = existing_by_path.data
-            if isinstance(existing_by_path_data, list) and existing_by_path_data:
-                existing_by_path_data = existing_by_path_data[0]
-            elif not isinstance(existing_by_path_data, dict):
-                existing_by_path_data = None
-            
+            if isinstance(existing_by_hash.data, list) and existing_by_hash.data:
+                skipped += 1
+                continue
+
             record = {
-                "source": "meetcap",
-                "external_id": content_hash,
                 "source_job": "meetcap",
                 "title": parsed["title"],
                 "brief_date": parsed["date"],
@@ -315,21 +302,16 @@ def import_meetcap_briefs(vault_dir, supabase):
                 "entity_refs": parsed["entity_refs"],
                 "content_hash": content_hash,
                 "metadata": {
-                    "external_id": note_path,
+                    "source_path": note_path,
                     "note_path": note_path,
                     "participants": parsed["participants"],
                     "task_count": parsed["task_count"]
                 }
             }
-            
-            if existing_by_path_data:
-                # Content changed — update by path
-                supabase.table("briefs").update(record).eq("id", existing_by_path_data["id"]).execute()
-            else:
-                # New record — insert
-                upsert_record(supabase, "briefs", record, "meetcap", content_hash)
-                
+
+            upsert_record(supabase, "briefs", record, "meetcap", note_path)
             imported += 1
+
             print(f"  Imported: {parsed['date']} - {parsed['title']}")
             
         except Exception as e:

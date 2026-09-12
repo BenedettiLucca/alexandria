@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { AuthContext, supabase } from "../config.ts";
+import { AuthContext } from "../config.ts";
+import { getDataClient } from "../data_context.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
 import { IGNORED_KEYWORDS } from "../lib.ts";
 import type { BriefRow, SearchBriefRow } from "../types.ts";
@@ -69,7 +70,7 @@ export function registerBriefsTools(
           body_markdown: normalizedBody,
         });
 
-        const { data: existing, error: existingError } = await supabase
+        const { data: existing, error: existingError } = await getDataClient()
           .from("briefs")
           .select("id, title, brief_date, kind, source_job")
           .eq("content_hash", contentHash)
@@ -96,7 +97,7 @@ export function registerBriefsTools(
         const embedding = await getEmbedding(briefToText(row));
         row.embedding = embedding;
 
-        const { data, error } = await supabase
+        const { data, error } = await getDataClient()
           .from("briefs")
           .insert(row)
           .select("id")
@@ -136,7 +137,7 @@ export function registerBriefsTools(
       async (
         { limit, kind, source_job, from, to, topic, project_ref, entity_ref },
       ) => {
-        let q = supabase
+        let q = getDataClient()
           .from("briefs")
           .select(
             "id, source_job, title, brief_date, kind, topics, project_refs, entity_refs, created_at",
@@ -222,7 +223,7 @@ export function registerBriefsTools(
         },
       ) => {
         const qEmb = await getEmbedding(query);
-        const { data, error } = await supabase.rpc("search_briefs", {
+        const { data, error } = await getDataClient().rpc("search_briefs", {
           query_embedding: qEmb,
           match_threshold: threshold,
           match_count: limit,
@@ -301,7 +302,7 @@ export function registerBriefsTools(
         persist,
       }) => {
         const qEmb = await getEmbedding(topic);
-        const { data: briefs, error } = await supabase.rpc("search_briefs", {
+        const { data: briefs, error } = await getDataClient().rpc("search_briefs", {
           query_embedding: qEmb,
           match_threshold: 0.4,
           match_count: max_items,
@@ -375,7 +376,7 @@ export function registerBriefsTools(
           });
 
           // Check if brief exists
-          const { data: existing, error: existingError } = await supabase
+          const { data: existing, error: existingError } = await getDataClient()
             .from("briefs")
             .select("id")
             .eq("content_hash", contentHash)
@@ -405,7 +406,7 @@ export function registerBriefsTools(
             const embedding = await getEmbedding(briefToText(row));
             row.embedding = embedding;
 
-            const { data: inserted, error: insertError } = await supabase
+            const { data: inserted, error: insertError } = await getDataClient()
               .from("briefs")
               .insert(row)
               .select("id")
