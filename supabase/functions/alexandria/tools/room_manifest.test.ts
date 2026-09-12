@@ -1,5 +1,6 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.12";
 import { supabase } from "../config.ts";
+import { runWithContext } from "../context.ts";
 import { registerBriefsTools } from "./briefs.ts";
 import {
   isBriefFresh,
@@ -274,13 +275,20 @@ Deno.test("Full build_room_manifest integration with mocked database", async () 
       }
     } as any;
 
-    registerBriefsTools(mockServer, () => undefined);
+    registerBriefsTools(mockServer, () => ({
+    method: "key",
+    userId: "test-owner",
+  }));
     assertExists(capturedHandler);
 
-    const resultOk = await capturedHandler({
-      topic: "Revenue status",
-      persist: true,
-    });
+    const resultOk = await runWithContext(
+      { auth: { method: "key", userId: "test-owner" }, callerClient: "test" },
+      async () =>
+        await capturedHandler({
+          topic: "Revenue status",
+          persist: true,
+        }),
+    );
 
     assertEquals(resultOk.isError, undefined);
     assertExists(resultOk.content);

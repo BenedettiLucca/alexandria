@@ -7,6 +7,17 @@ from unittest.mock import patch, MagicMock, MagicMock as MockModule
 
 from importers.conftest import db_to_file as save_db_to_file
 
+
+def _rpc_records(mock_supabase, rpc_name="upsert_health_entry"):
+    """Compat: payloads RPC no formato legado [call][args][record]."""
+    out = []
+    for c in mock_supabase.rpc.call_args_list:
+        if c[0][0] != rpc_name:
+            continue
+        rec = {k[2:] if k.startswith("p_") else k: v for k, v in c[0][1].items()}
+        out.append(((rec,),))
+    return out
+
 _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 _spec = importlib.util.spec_from_file_location(
@@ -166,7 +177,7 @@ class TestImportSteps:
 
         assert imported == 1
         assert skipped == 0
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "steps"
         assert record["numeric_value"] == 8500
@@ -186,8 +197,9 @@ class TestImportSteps:
 
         imported, skipped = import_records(conn, mock_supabase, STEPS_CONFIG)
 
-        assert imported == 0
-        assert skipped == 1
+        # Semântica nova: upsert atômico idempotente regrava mesmo já existente (fix #59)
+        assert imported == 1
+        assert skipped == 0
         conn.close()
         os.unlink(path)
 
@@ -206,7 +218,7 @@ class TestImportSleep:
         imported, skipped = import_records(conn, mock_supabase, SLEEP_CONFIG)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "sleep"
         assert record["numeric_value"] is not None
@@ -229,7 +241,7 @@ class TestImportExercise:
         imported, skipped = import_records(conn, mock_supabase, EXERCISE_CONFIG)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "exercise"
         assert record["tags"] == ["health-connect", "exercise"]
@@ -252,7 +264,7 @@ class TestImportHeartRate:
         imported, skipped = import_records(conn, mock_supabase, HEART_RATE_CONFIG)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "heart_rate"
         assert record["numeric_value"] == 72
@@ -275,7 +287,7 @@ class TestImportWeight:
         imported, skipped = import_records(conn, mock_supabase, WEIGHT_CONFIG)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "weight"
         assert record["numeric_value"] == 80.5
@@ -298,7 +310,7 @@ class TestImportBloodPressure:
         imported, skipped = import_records(conn, mock_supabase, BLOOD_PRESSURE_CONFIG)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "blood_pressure"
         assert record["numeric_value"] == 120.0
@@ -321,7 +333,7 @@ class TestImportNutrition:
         imported, skipped = import_nutrition(conn, mock_supabase)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["entry_type"] == "water"
         assert record["numeric_value"] == 500.0
@@ -341,11 +353,7 @@ class TestImportNutrition:
         imported, skipped = import_nutrition(conn, mock_supabase)
 
         assert imported >= 1
-        nutrition_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("entry_type") == "nutrition"
-        ]
+        nutrition_calls = [c for c in _rpc_records(mock_supabase) if c[0][0].get("entry_type") == "nutrition"]
         assert len(nutrition_calls) == 1
         record = nutrition_calls[0][0][0]
         assert record["value"]["protein"] == 150.0
@@ -383,7 +391,7 @@ class TestMissingFields:
         imported, skipped = import_records(conn, mock_supabase, WEIGHT_CONFIG)
 
         assert imported == 1
-        insert_calls = mock_supabase.table.return_value.insert.call_args_list
+        insert_calls = _rpc_records(mock_supabase)
         record = insert_calls[0][0][0]
         assert record["numeric_value"] == 0.0
         conn.close()
@@ -431,4 +439,4 @@ class TestFailureTracking:
             main()
 
         assert mock_record_sync.call_args is not None
-        assert mock_record_sync.call_args.kwargs["failed"] == 2
+        assert mock_record_sync.call_args.kwargs["failed_tables"] == 2

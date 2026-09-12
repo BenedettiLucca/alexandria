@@ -3,6 +3,7 @@ import {
   SUPABASE_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY,
   SUPABASE_URL,
+  supabase,
 } from "./config.ts";
 import { getContext } from "./context.ts";
 import type { Database } from "./types.ts";
@@ -30,8 +31,10 @@ export function getDataContext(): DataContext {
       method: context.auth.method,
     };
   }
+  // API-key path: delegate to the shared service-role client (RLS bypasses
+  // by design, owner identity already enforced fail-closed at authenticate()).
   return {
-    client: createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY),
+    client: supabase,
     userId: context.auth.userId,
     method: context.auth.method,
   };
