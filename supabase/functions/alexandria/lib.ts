@@ -736,21 +736,21 @@ export function formatMemoryStats(data: {
 export function extractBodyCompMetrics(
   value: Record<string, unknown>,
 ): Record<string, number | null> {
-  const keys = [
-    "weight_kg",
-    "body_fat_percent",
-    "skeletal_muscle_kg",
-    "body_water_kg",
-    "waist_cm",
-    "chest_cm",
-    "arm_cm",
-    "thigh_cm",
-    "calf_cm",
-  ];
+  const aliases: Record<string, string[]> = {
+    weight_kg: ["weight_kg", "weight"],
+    body_fat_percent: ["body_fat_percent", "body_fat_pct", "body_fat"],
+    skeletal_muscle_kg: ["skeletal_muscle_kg", "muscle_mass_kg", "muscle_kg"],
+    body_water_kg: ["body_water_kg", "water_kg"],
+    waist_cm: ["waist_cm", "waist"],
+    chest_cm: ["chest_cm", "chest"],
+    arm_cm: ["arm_cm", "arm", "arm_right"],
+    thigh_cm: ["thigh_cm", "thigh", "thigh_right"],
+    calf_cm: ["calf_cm", "calf"],
+  };
   const metrics: Record<string, number | null> = {};
-  for (const key of keys) {
-    const val = value[key];
-    metrics[key] = typeof val === "number" ? val : null;
+  for (const [key, candidates] of Object.entries(aliases)) {
+    const val = candidates.map((candidate) => value[candidate]).find((candidate) => candidate !== undefined && candidate !== null);
+    metrics[key] = typeof val === "number" && Number.isFinite(val) ? val : null;
   }
   return metrics;
 }
