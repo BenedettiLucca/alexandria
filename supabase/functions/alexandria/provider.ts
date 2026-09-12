@@ -1,5 +1,6 @@
 import {
   CLASSIFICATION_MODEL,
+  EMBEDDING_DIMENSION,
   EMBEDDING_MODEL,
   OPENROUTER_API_KEY,
   OPENROUTER_BASE,
@@ -398,6 +399,7 @@ export class OpenRouterProvider {
         body: JSON.stringify({
           model: this.embeddingModel,
           input: text,
+          dimensions: EMBEDDING_DIMENSION,
         }),
       },
     );
@@ -416,6 +418,11 @@ export class OpenRouterProvider {
     if (!embedding || !Array.isArray(embedding)) {
       throw new ProviderMalformedResponseError(
         "Malformed response: embedding array missing",
+      );
+    }
+    if (embedding.length !== EMBEDDING_DIMENSION) {
+      throw new ProviderMalformedResponseError(
+        `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSION}, got ${embedding.length}`,
       );
     }
 

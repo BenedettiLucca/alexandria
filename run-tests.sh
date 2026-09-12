@@ -39,7 +39,7 @@ else
     LOCAL_SUPABASE_URL=http://localhost:5432 \
     LOCAL_SUPABASE_SERVICE_ROLE_KEY=test-key \
     MCP_ACCESS_KEY=test \
-    OPENROUTER_API_KEY=test \
+    OPENROUTER_API_KEY=test EMBEDDING_MODEL=qwen/qwen3-embedding-8b \
     deno test --allow-all tools/telemetry.test.ts
 
     echo "--- 3.3 Deno unit suite (existente) ---"
@@ -50,7 +50,7 @@ else
     LOCAL_SUPABASE_SERVICE_ROLE_KEY=test-key \
     LOCAL_SUPABASE_ANON_KEY=test-anon-key \
     MCP_ACCESS_KEY=test \
-    OPENROUTER_API_KEY=test \
+    OPENROUTER_API_KEY=test EMBEDDING_MODEL=qwen/qwen3-embedding-8b \
     deno test --allow-all --no-check
   )
 fi

@@ -230,7 +230,7 @@ Deno.test("provider: getEmbedding returns embedding on success and throws typed 
     return Promise.resolve(
       new Response(
         JSON.stringify({
-          data: [{ embedding: [0.1, 0.2, 0.3] }],
+          data: [{ embedding: Array(2048).fill(0.1) }],
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -244,7 +244,7 @@ Deno.test("provider: getEmbedding returns embedding on success and throws typed 
   });
 
   const embedding = await successProvider.getEmbedding("test text");
-  assertEquals(embedding, [0.1, 0.2, 0.3]);
+  assertEquals(embedding.length, 2048);
 
   const failFetch: typeof fetch = () => {
     return Promise.resolve(new Response("Unauthorized", { status: 401 }));

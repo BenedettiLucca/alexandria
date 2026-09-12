@@ -17,10 +17,13 @@ import {
 } from "./provider.ts";
 import { processEntities } from "./helpers.ts";
 
-export const EMBEDDING_DIMENSION = 1536;
+export const EMBEDDING_DIMENSION = 2048;
 export const DEFAULT_EMBEDDING_SPACE = EMBEDDING_MODEL || "openai/text-embedding-3-small";
 
 export const KNOWN_EMBEDDING_DIMENSIONS: Record<string, number> = {
+  "qwen/qwen3-embedding-8b": 2048,
+  "qwen/qwen3-embedding-4b": 2560,
+  "qwen/qwen3-embedding-0.6b": 1024,
   "openai/text-embedding-3-small": 1536,
   "openai/text-embedding-3-large": 3072,
   "openai/text-embedding-ada-002": 1536,
@@ -165,10 +168,10 @@ export interface LifecycleStatus {
 }
 
 /**
- * Generate a deterministic synthetic embedding of length 1536 from input text.
+ * Generate a deterministic synthetic embedding of configured dimension from input text.
  * Used for deterministic smoke testing and local pipelines without paid API calls.
  */
-export function generateSyntheticEmbedding(text: string, dimension: number = 1536): number[] {
+export function generateSyntheticEmbedding(text: string, dimension: number = EMBEDDING_DIMENSION): number[] {
   let hash = 0;
   for (let i = 0; i < text.length; i++) {
     hash = (hash << 5) - hash + text.charCodeAt(i);

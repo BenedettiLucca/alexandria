@@ -4,11 +4,11 @@
 
 The indexing lifecycle in Alexandria guarantees that:
 1. **Every write has observable state**: Every record in the 4 vector tables (`memories`, `briefs`, `health_entries`, `training_logs`) tracks `embedding_status` (`pending`, `processing`, `ready`, `failed`), `embedding_space`, `embedding_version`, and `embedded_at`.
-2. **Incompatible embeddings are never searched together**: All 4 search RPCs (`search_memories`, `search_briefs`, `search_health_entries`, `search_training_logs`) strictly guard by `embedding_space = p_space` and `embedding_status = 'ready'`. Even models sharing the same dimension (e.g. 1536) are strictly isolated.
+2. **Incompatible embeddings are never searched together**: All 4 search RPCs (`search_memories`, `search_briefs`, `search_health_entries`, `search_training_logs`) strictly guard by `embedding_space = p_space` and `embedding_status = 'ready'`. Even models sharing the same dimension (e.g. ambos 2048) are strictly isolated.
 3. **Importers and MCP tools produce outbox jobs atomically**: Database triggers (`trg_indexing_outbox_after`) automatically enqueue rows without embeddings into `indexing_outbox` with unique constraint `(source_table, source_id, job_type)`.
 4. **Compare-And-Swap (CAS) concurrency**: Updates increment `embedding_version`. Late jobs attempting to write an old version are marked `superseded` and do NOT overwrite newer updates.
 5. **Entity enrichment is independent**: `memories` has its own `job_type = 'entity_enrichment'` in `indexing_outbox` and `enrichment_status` on the table.
-6. **Preflight dimension check**: Verifies dimension (1536) before writes and cold starts without requiring paid OpenRouter requests.
+6. **Preflight dimension check**: Verifies dimension (2048) before writes and cold starts without requiring paid OpenRouter requests.
 
 ---
 
@@ -19,7 +19,7 @@ The indexing lifecycle in Alexandria guarantees that:
 | Column | Type | Default / Constraints | Description |
 |---|---|---|---|
 | `embedding_status` | `TEXT` | `'pending'` (`pending`, `processing`, `ready`, `failed`) | Lifecycle state |
-| `embedding_space` | `TEXT` | `'openai/text-embedding-3-small'` | Target vector model/space |
+| `embedding_space` | `TEXT` | `'qwen/qwen3-embedding-8b'` | Target vector model/space |
 | `embedding_version` | `INT` | `1` | Incremented on every content update |
 | `embedded_at` | `TIMESTAMPTZ` | `NULL` | Timestamp of successful embedding |
 | `content_hash` | `TEXT` | SHA256 of canonical fields | Used for CAS validation |
@@ -72,7 +72,7 @@ Via MCP Tool:
   "arguments": {
     "cap": 25,
     "deadline_ms": 8000,
-    "target_space": "openai/text-embedding-3-small",
+    "target_space": "qwen/qwen3-embedding-8b",
     "domain": "all"
   }
 }
@@ -109,7 +109,7 @@ Via MCP Tool:
 {
   "name": "trigger_indexing_backfill",
   "arguments": {
-    "target_space": "openai/text-embedding-3-small",
+    "target_space": "qwen/qwen3-embedding-8b",
     "budget_limit": 50,
     "domain": "memories"
   }

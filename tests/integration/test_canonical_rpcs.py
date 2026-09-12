@@ -70,8 +70,8 @@ def test_canonical_rpcs_callable_via_postgrest(service_client):
     ).execute()
     assert isinstance(res2.data, list)
 
-    # 3. search_briefs com query_embedding 1536d zerado deve executar sem erro
-    zero_vec = [0.0] * 1536
+    # 3. search_briefs com query_embedding 2048d zerado deve executar sem erro
+    zero_vec = [0.0] * 2048
     res3 = service_client.rpc(
         "search_briefs",
         {"query_embedding": zero_vec, "match_threshold": 0.5, "match_count": 5},

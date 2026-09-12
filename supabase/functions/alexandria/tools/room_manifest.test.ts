@@ -193,7 +193,7 @@ Deno.test("Full build_room_manifest integration with mocked database", async () 
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            data: [{ embedding: [0.1, 0.2, 0.3] }],
+            data: [{ embedding: Array(2048).fill(0.1) }],
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )

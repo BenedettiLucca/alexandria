@@ -13,8 +13,8 @@ export const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY")!;
 export const OWNER_USER_ID = Deno.env.get("ALEXANDRIA_OWNER_USER_ID")?.trim() || null;
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 export const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") ||
-  "openai/text-embedding-3-small";
-export const EMBEDDING_DIMENSION = 1536;
+  "qwen/qwen3-embedding-8b";
+export const EMBEDDING_DIMENSION = 2048;
 export const DEFAULT_EMBEDDING_SPACE = EMBEDDING_MODEL;
 export const CLASSIFICATION_MODEL = Deno.env.get("CLASSIFICATION_MODEL") ||
   "openai/gpt-4o-mini";

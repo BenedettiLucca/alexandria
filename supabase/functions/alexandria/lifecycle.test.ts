@@ -11,25 +11,25 @@ import {
   preflightSpaceCheck,
 } from "./lifecycle.ts";
 
-Deno.test("lifecycle: preflightDimensionCheck succeeds on 1536 and throws on mismatch", () => {
-  preflightDimensionCheck(1536);
-  preflightDimensionCheck(1536, 1536);
+Deno.test("lifecycle: preflightDimensionCheck succeeds on 2048 and throws on mismatch", () => {
+  preflightDimensionCheck(2048);
+  preflightDimensionCheck(2048, 2048);
 
   assertThrows(
     () => preflightDimensionCheck(512),
     DimensionMismatchError,
-    "Embedding dimension mismatch: expected 1536, got 512",
+    "Embedding dimension mismatch: expected 2048, got 512",
   );
 
   assertThrows(
     () => preflightDimensionCheck(3072),
     DimensionMismatchError,
-    "Embedding dimension mismatch: expected 1536, got 3072",
+    "Embedding dimension mismatch: expected 2048, got 3072",
   );
 });
 
 Deno.test("lifecycle: preflightSpaceCheck validates space and rejects incompatible spaces", () => {
-  preflightSpaceCheck("openai/text-embedding-3-small");
+  preflightSpaceCheck("qwen/qwen3-embedding-8b");
 
   assertThrows(
     () => preflightSpaceCheck(""),
@@ -41,7 +41,7 @@ Deno.test("lifecycle: preflightSpaceCheck validates space and rejects incompatib
     InvalidSpaceError,
   );
 
-  // 3072 dimension space rejected for 1536 schema
+  // 3072 dimension space rejected for 2048 schema
   assertThrows(
     () => preflightSpaceCheck("openai/text-embedding-3-large"),
     DimensionMismatchError,
@@ -53,17 +53,17 @@ Deno.test("lifecycle: generateSyntheticEmbedding is deterministic and normalized
   const vec1 = generateSyntheticEmbedding(textA);
   const vec2 = generateSyntheticEmbedding(textA);
 
-  assertEquals(vec1.length, 1536);
-  assertEquals(vec2.length, 1536);
+  assertEquals(vec1.length, 2048);
+  assertEquals(vec2.length, 2048);
   assertEquals(vec1, vec2);
 
   const textB = "Workout: Leg day 4x10 squats";
   const vecB = generateSyntheticEmbedding(textB);
-  assertEquals(vecB.length, 1536);
+  assertEquals(vecB.length, 2048);
 
   // Different text generates different embeddings
   let differenceCount = 0;
-  for (let i = 0; i < 1536; i++) {
+  for (let i = 0; i < 2048; i++) {
     if (Math.abs(vec1[i] - vecB[i]) > 1e-4) {
       differenceCount++;
     }
@@ -72,7 +72,7 @@ Deno.test("lifecycle: generateSyntheticEmbedding is deterministic and normalized
 
   // Check approximate normalization (L2 norm ~ 1)
   let normSq = 0;
-  for (let i = 0; i < 1536; i++) {
+  for (let i = 0; i < 2048; i++) {
     normSq += vec1[i] * vec1[i];
   }
   assertEquals(Math.abs(Math.sqrt(normSq) - 1.0) < 0.05, true);
@@ -91,7 +91,7 @@ Deno.test("lifecycle: backfillLegacy requires explicit space and positive budget
   await assertRejects(
     async () => {
       await worker.backfillLegacy({
-        space: "openai/text-embedding-3-small",
+        space: "qwen/qwen3-embedding-8b",
         budget: 0,
       });
     },
@@ -101,7 +101,7 @@ Deno.test("lifecycle: backfillLegacy requires explicit space and positive budget
   await assertRejects(
     async () => {
       await worker.backfillLegacy({
-        space: "openai/text-embedding-3-small",
+        space: "qwen/qwen3-embedding-8b",
         budget: -5,
       });
     },
@@ -133,7 +133,7 @@ Deno.test("lifecycle: reconcileBatch respects deadline timeout", async () => {
         source_version: 1,
         content_hash: "hash-1",
         target_space: DEFAULT_EMBEDDING_SPACE,
-        target_dimension: 1536,
+        target_dimension: 2048,
         job_type: "embedding",
         status: "pending",
         attempts: 0,
@@ -147,7 +147,7 @@ Deno.test("lifecycle: reconcileBatch respects deadline timeout", async () => {
         source_version: 1,
         content_hash: "hash-2",
         target_space: DEFAULT_EMBEDDING_SPACE,
-        target_dimension: 1536,
+        target_dimension: 2048,
         job_type: "embedding",
         status: "pending",
         attempts: 0,

@@ -420,7 +420,7 @@ def test_search_memories_owner_isolation(service_client, user_a, user_b):
     uid_b = user_b["id"]
     client_a = user_a["client"]
     client_b = user_b["client"]
-    zero_vec = [0.0] * 1536
+    zero_vec = [0.0] * 2048
 
     mem_a = client_a.table("memories").insert({
         "user_id": uid_a,

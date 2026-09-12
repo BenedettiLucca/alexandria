@@ -87,7 +87,7 @@ def test_search_rpcs_guarded_by_space_and_ready_status(service_client, user_a):
     """Search RPCs guard by embedding_space and only return ready rows."""
     owner = user_a["id"]
     client = user_a["client"]
-    zero_vec = [0.0] * 1536
+    zero_vec = [0.0] * 2048
 
     # Insert memory in default space ('openai/text-embedding-3-small')
     mem1 = client.table("memories").insert({
@@ -122,7 +122,7 @@ def test_search_rpcs_guarded_by_space_and_ready_status(service_client, user_a):
             "query_embedding": zero_vec,
             "match_threshold": -1.0,
             "match_count": 10,
-            "p_space": "openai/text-embedding-3-small",
+            "p_space": "qwen/qwen3-embedding-8b",
         }).execute()
         found_ids = [r["id"] for r in search_default.data]
 
@@ -231,7 +231,7 @@ def test_backfill_indexing_jobs_requires_explicit_space_and_budget(service_clien
     # Non-positive budget fails
     with pytest.raises(Exception) as exc2:
         client.rpc("backfill_indexing_jobs", {
-            "p_space": "openai/text-embedding-3-small",
+            "p_space": "qwen/qwen3-embedding-8b",
             "p_budget_limit": 0,
         }).execute()
     assert "Explicit positive budget limit is required" in str(exc2.value)
