@@ -160,6 +160,17 @@ def auth_user_factory(service_client, credentials):
 
     yield _create
 
+    # Limpeza: rows de dominio primeiro (FKs de indexing_outbox/etc seguram
+    # auth.users; deletar na ordem errada derruba o backend auth local com
+    # segfault no PG 17.6 empacotado pelo CLI — ver ledger D-ENV-PGCRASH).
+    for uid in created_users:
+        for table in ("indexing_outbox", "health_summaries", "health_entries",
+                      "training_logs", "briefs", "memories", "brief_claims",
+                      "entity_mentions", "entities", "room_recipes"):
+            try:
+                service_client.table(table).delete().eq("user_id", uid).execute()
+            except Exception:
+                pass
     for uid in created_users:
         try:
             service_client.auth.admin.delete_user(uid)
