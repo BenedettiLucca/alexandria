@@ -7,7 +7,6 @@ https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria
 ```
 
 Authentication via header: `x-brain-key: YOUR_MCP_ACCESS_KEY`
-Or via query param: `?key=YOUR_MCP_ACCESS_KEY`
 
 ### Optional: label your calls with a client name
 
@@ -98,5 +97,5 @@ The server uses standard Streamable HTTP transport. Connection params:
 | Transport | Streamable HTTP |
 | URL | `https://YOUR_PROJECT_REF.supabase.co/functions/v1/alexandria` |
 | Auth header | `x-brain-key: YOUR_MCP_ACCESS_KEY` |
-| Auth query param | `?key=YOUR_MCP_ACCESS_KEY` |
+| Auth query param | *(removed — header only, see #40)* |
 | Client label header (optional) | `x-alexandria-client: your-client-name` |

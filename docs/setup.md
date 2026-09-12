@@ -72,13 +72,19 @@ SUPABASE_URL=https://your-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 OPENROUTER_API_KEY=sk-or-...
 MCP_ACCESS_KEY=<generate a random string>
+ALEXANDRIA_OWNER_USER_ID=<uuid from Authentication -> Users>
+COVERAGE_CAPTURE_SECRET=<generate another random string>
 ```
+
+`ALEXANDRIA_OWNER_USER_ID` is **required**: every request (JWT or API key) resolves to this
+owner, and the function refuses to start without it. `COVERAGE_CAPTURE_SECRET` is required by
+the coverage-capture cron (sent as the `x-coverage-capture-secret` header).
 
 **Optional environment variables:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Model for generating embeddings |
+| `EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` (@ 2048 dims) | Embedding model (dimension is derived from `EMBEDDING_DIMENSION`, default 2048) |
 | `CLASSIFICATION_MODEL` | `openai/gpt-4o-mini` | Model for memory classification |
 | `ALLOWED_ORIGINS` | *(all origins)* | Comma-separated list of allowed CORS origins |
 | `GOOGLE_TOKEN_PATH` | `importers/health-connect/token.json` | Path to Google OAuth token file |
@@ -106,9 +112,26 @@ This:
 After deploy, schedule `coverage-capture` to run nightly (it snapshots coverage lanes into `coverage_snapshots` so `coverage_transition_report` can detect NEW/ONGOING/RECOVERED transitions). In the Supabase dashboard: **Database → Edge Functions → coverage-capture → Cron/Schedule**, or use `pg_cron`:
 
 ```sql
--- nightly 02:00 capture + 90-day telemetry prune (run daily 03:00)
-SELECT cron.schedule('coverage-capture', '0 2 * * *', 'select net.http_post(url: ''https://<ref>.supabase.co/functions/v1/coverage-capture'')');
+-- nightly 02:00 capture (auth: secret + owner headers are REQUIRED - handler is default-deny)
+SELECT cron.schedule(
+  'coverage-capture', '0 2 * * *',
+  $$
+  select net.http_post(
+    url:='https://<ref>.supabase.co/functions/v1/coverage-capture',
+    headers:=jsonb_build_object(
+      'Content-Type','application/json',
+      'x-coverage-capture-secret','<COVERAGE_CAPTURE_SECRET>',
+      'x-coverage-execution-id', gen_random_uuid()::text,
+      'x-coverage-cadence','daily'
+    ),
+    body:='{}'::jsonb
+  );
+  $$
+);
 ```
+
+90-day telemetry pruning is available via `prune_tool_call_log(90)` (schedule alongside the
+above); only `service_role` may execute it.
 
 Tool telemetry is always-on; 90-day pruning is available via the `prune_tool_call_log(90)` SQL function (invoke it from a scheduled job or cron alongside the above).
 
@@ -116,7 +139,7 @@ Tool telemetry is always-on; 90-day pruning is available via the `prune_tool_cal
 
 ```bash
 curl -H "x-brain-key: YOUR_MCP_ACCESS_KEY" \
-  "https://YOUR_REF.supabase.co/functions/v1/alexandria?key=YOUR_MCP_ACCESS_KEY"
+  "https://YOUR_REF.supabase.co/functions/v1/alexandria"
 ```
 
 You should get a response (not a 401 error).
@@ -150,14 +173,17 @@ The first run of `importers/health-connect/sync.py` will open a browser for OAut
 After importing health data, you can compute daily summaries using the `health_summary` and `refresh_summary` MCP tools, or call the SQL function directly:
 
 ```sql
-SELECT compute_daily_summary('2026-04-25');
+SELECT alexandria_priv.compute_daily_summary('2026-04-25');
 ```
+
+The function lives in the `alexandria_priv` schema (not exposed via the API) and enforces the
+owner invariant: authenticated callers can only compute their own summaries.
 
 This aggregates sleep, steps, heart rate, weight, exercise, and training data into `health_summaries`.
 
 ## Knowledge Graph
 
-Entities are automatically extracted when capturing memories (via LLM classification). You can also manually manage them through the entity MCP tools: `add_entity`, `get_entity`, `list_entities`, `search_entities`, `get_entity_mentions`, `search_mentions`, `top_entities`.
+Entities are automatically extracted when capturing memories (via LLM classification). You can also manually manage them through the entity MCP tools: `get_entity`, `list_entities`, `search_entities`, `get_entity_mentions`, `search_mentions`, `top_entities` (see the MCP tools list from the server for the authoritative set).
 
 ## Updating
 

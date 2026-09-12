@@ -49,7 +49,7 @@ O objetivo da task **T03A** é eliminar toda possibilidade de dados privados e d
 As seguintes assinaturas de funções foram congeladas para compatibilidade contratual estrita com **T03B (Edge Functions Auth / Identity)**, **T05 (Pipeline e Sync Runners)** e **T06 (Identidades Únicas)**:
 
 ### 3.1 Agregação e Derivadas
-* **`compute_daily_summary(target_date DATE, p_user_id UUID DEFAULT NULL) -> JSONB`**
+* **`alexandria_priv.compute_daily_summary(target_date DATE, p_user_id UUID DEFAULT NULL, p_timezone TEXT DEFAULT NULL) -> JSONB` (SECURITY INVOKER; JWT callers may only target themselves)**
   - **Modo:** `SECURITY DEFINER`, `SET search_path = public`
   - **Comportamento:** Extrai métricas de `health_entries` e `training_logs` onde `user_id = v_owner`, persistindo o resumo em `health_summaries` com constraint `UNIQUE NULLS NOT DISTINCT (user_id, date)`.
 

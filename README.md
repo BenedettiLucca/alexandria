@@ -40,7 +40,7 @@ Supabase Edge Function (Deno + Hono + MCP SDK)
 | Framework | Hono + @hono/mcp |
 | Transport | Streamable HTTP |
 | Database | Supabase PostgreSQL + pgvector |
-| AI | OpenRouter (text-embedding-3-small, gpt-4o-mini) |
+| AI | OpenRouter (qwen3-embedding @2048, gpt-4o-mini) |
 | Importers | Python 3.11+ |
 
 ## Database Schema
