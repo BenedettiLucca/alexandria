@@ -282,6 +282,11 @@ BEGIN
 END;
 $$;
 
+-- Hardening: EXECUTE para PUBLIC e o default do Postgres; REVOKE explicito obrigatorio
+REVOKE EXECUTE ON FUNCTION authenticate_ingest_credential(TEXT) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION create_ingest_credential(UUID,TEXT,TEXT,TEXT,TEXT[],JSONB) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION rotate_ingest_credential(TEXT,TEXT,TEXT,UUID) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION revoke_ingest_credential(TEXT,UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION authenticate_ingest_credential TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION create_ingest_credential TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION rotate_ingest_credential TO authenticated, service_role;
