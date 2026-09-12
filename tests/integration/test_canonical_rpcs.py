@@ -58,13 +58,26 @@ def test_canonical_rpcs_exist_in_pg_proc_and_information_schema(run_sql):
     assert "TABLE" in found_names["get_coverage_transition_report"]["result_type"]
 
 
-def test_canonical_rpcs_callable_via_postgrest(service_client):
+def test_canonical_rpcs_callable_via_postgrest(service_client, run_sql):
     """Valida execução real dos RPCs via cliente PostgREST/Supabase."""
-    # 1. capture_coverage_snapshot sem argumentos deve rodar com defaults e retornar contagem
-    res1 = service_client.rpc("capture_coverage_snapshot", {}).execute()
-    assert isinstance(res1.data, int)
+    # 0. capture_coverage_snapshot é fail-closed: exige owner explícito (#41/T17)
+    owner_row = run_sql("SELECT id FROM auth.users ORDER BY created_at LIMIT 1")
+    owner_id = str(owner_row[0]["id"] if isinstance(owner_row, list) else owner_row["id"])
+    assert owner_id, "seed user ausente"
+    res0 = service_client.rpc("capture_coverage_snapshot", {
+        "p_target_days": 7,
+        "p_source_kind": "health",
+        "p_producer": "scheduler",
+        "p_user_id": owner_id,
+        "p_execution_id": "gate-e2e-1",
+    }).execute()
+    assert isinstance(res0.data, int)
 
-    # 2. get_coverage_transition_report deve rodar e retornar lista
+    # Sem owner deve falhar (default-deny)
+    with pytest.raises(APIError):
+        service_client.rpc("capture_coverage_snapshot", {}).execute()
+
+    # 1. get_coverage_transition_report deve rodar e retornar lista
     res2 = service_client.rpc(
         "get_coverage_transition_report", {"p_days": 30}
     ).execute()
