@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "npm:zod@3.24.1";
-import { AuthContext, supabase } from "../config.ts";
+import { AuthContext } from "../config.ts";
+import { getDataClient } from "../data_context.ts";
 import { wrapHandler } from "../helpers.ts";
 import { IGNORED_KEYWORDS } from "../lib.ts";
 import type { BriefRow } from "../types.ts";
@@ -354,7 +355,7 @@ export function registerConflictRadarTools(
       >[] = [];
 
       if (brief_ids && brief_ids.length > 0) {
-        const { data, error } = await supabase
+        const { data, error } = await getDataClient()
           .from("briefs")
           .select(
             "id, title, brief_date, kind, source_job, body_markdown, entity_refs",
@@ -367,7 +368,7 @@ export function registerConflictRadarTools(
         cutoffDate.setDate(cutoffDate.getDate() - (recent_days ?? 14));
         const cutoffStr = cutoffDate.toISOString().split("T")[0];
 
-        const { data, error } = await supabase
+        const { data, error } = await getDataClient()
           .from("briefs")
           .select(
             "id, title, brief_date, kind, source_job, body_markdown, entity_refs",
