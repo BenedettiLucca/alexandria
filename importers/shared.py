@@ -31,34 +31,62 @@ def connect_supabase():
 def dedup_by_external_id(supabase, table, source, external_id):
     if not external_id:
         return False
-    existing = (
-        supabase.table(table)
-        .select("id")
-        .eq("source", source)
-        .eq("external_id", external_id)
-        .execute()
-    )
-    return bool(existing.data)
-
-
-def upsert_record(supabase, table, record, source, external_id):
-    if external_id:
-        existing = (
+    if table == "briefs":
+        query = supabase.table(table).select("id").eq("content_hash", external_id)
+    else:
+        query = (
             supabase.table(table)
             .select("id")
             .eq("source", source)
             .eq("external_id", external_id)
-            .execute()
         )
-        if existing.data:
-            return (
-                supabase.table(table)
-                .update(record)
-                .eq("source", source)
-                .eq("external_id", external_id)
-                .execute()
-            )
-    return supabase.table(table).insert(record).execute()
+    data = query.execute().data
+    return isinstance(data, list) and bool(data)
+
+
+def _rpc_payload(table, record, source, external_id):
+    payload = dict(record)
+    payload.pop("source", None)
+    payload.pop("external_id", None)
+    payload["p_source"] = source
+    payload["p_external_id"] = external_id
+    if table == "briefs":
+        metadata = record.get("metadata") or {}
+        payload = {
+            "p_title": record["title"],
+            "p_brief_date": record["brief_date"],
+            "p_kind": record["kind"],
+            "p_body_markdown": record["body_markdown"],
+            "p_source_job": record.get("source_job", source),
+            "p_source_path": metadata.get("source_path", metadata.get("note_path")),
+            "p_topics": record.get("topics", []),
+            "p_project_refs": record.get("project_refs", []),
+            "p_entity_refs": record.get("entity_refs", []),
+            "p_metadata": metadata,
+            "p_content_hash": record.get("content_hash", external_id),
+        }
+    else:
+        payload = {
+            f"p_{key}": value
+            for key, value in payload.items()
+            if key not in {"p_source", "p_external_id"}
+        }
+        payload["p_source"] = source
+        payload["p_external_id"] = external_id
+    return payload
+
+
+def upsert_record(supabase, table, record, source, external_id):
+    rpc_names = {
+        "health_entries": "upsert_health_entry",
+        "training_logs": "upsert_training_log",
+        "briefs": "upsert_brief",
+    }
+    try:
+        rpc_name = rpc_names[table]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported upsert table: {table}") from exc
+    return supabase.rpc(rpc_name, _rpc_payload(table, record, source, external_id)).execute()
 
 
 def record_sync(
@@ -69,10 +97,16 @@ def record_sync(
     imported=0,
     skipped=0,
     failed=0,
+    failed_tables=0,
     started_at=None,
     error=None,
+    status=None,
 ):
     try:
+        if status is None:
+            status = "failed" if error else ("partial" if failed or failed_tables else "completed")
+        if status not in {"running", "completed", "partial", "failed"}:
+            raise ValueError(f"Unsupported sync status: {status}")
         row = {
             "source": source,
             "sync_type": sync_type,
@@ -80,9 +114,11 @@ def record_sync(
             "records_imported": imported,
             "records_skipped": skipped,
             "records_failed": failed,
-            "status": "failed" if error else "completed",
+            "status": status,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if failed_tables:
+            row["metadata"] = {"failed_tables": failed_tables}
         if started_at:
             row["started_at"] = started_at
         if error:
