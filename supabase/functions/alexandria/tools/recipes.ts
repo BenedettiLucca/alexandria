@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "npm:zod@3.24.1";
-import { AuthContext, supabase } from "../config.ts";
+import { AuthContext } from "../config.ts";
+import { getDataClient } from "../data_context.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
 import type { RoomRecipeRow } from "../types.ts";
 import { BriefMatch } from "./briefs.ts";
@@ -257,7 +258,7 @@ export function registerRecipeTools(
       },
     },
     wrapHandler(async (args) => {
-      const { data, error } = await supabase
+      const { data, error } = await getDataClient()
         .from("room_recipes")
         .upsert({
           name: args.name.trim(),
@@ -298,7 +299,7 @@ export function registerRecipeTools(
       },
     },
     wrapHandler(async ({ profile_hint }) => {
-      let query = supabase.from("room_recipes").select(
+      let query = getDataClient().from("room_recipes").select(
         "id, name, description, profile_hint",
       ).order("name");
       if (profile_hint) {
@@ -339,7 +340,7 @@ export function registerRecipeTools(
       },
     },
     wrapHandler(async ({ name }) => {
-      const { data, error } = await supabase
+      const { data, error } = await getDataClient()
         .from("room_recipes")
         .select("*")
         .eq("name", name.trim())
@@ -366,7 +367,7 @@ export function registerRecipeTools(
       },
     },
     wrapHandler(async ({ recipe_name, topic }) => {
-      const { data: recipe, error: recipeError } = await supabase
+      const { data: recipe, error: recipeError } = await getDataClient()
         .from("room_recipes")
         .select("*")
         .eq("name", recipe_name.trim())
@@ -385,7 +386,7 @@ export function registerRecipeTools(
       }
 
       const qEmb = await getEmbedding(finalTopic);
-      const { data: briefs, error: searchError } = await supabase.rpc(
+      const { data: briefs, error: searchError } = await getDataClient().rpc(
         "search_briefs",
         {
           query_embedding: qEmb,
