@@ -393,12 +393,12 @@ def test_derived_daily_summary_owner_isolation(service_client, user_a, user_b):
 
     try:
         # Usuario A executa compute_daily_summary
-        res_summary_a = client_a.rpc("compute_daily_summary", {"target_date": target_date}).execute()
+        res_summary_a = client_a.schema("alexandria_priv").rpc("compute_daily_summary", {"target_date": target_date}).execute()
         assert res_summary_a.data is not None
         assert res_summary_a.data["steps_total"] == 7000, f"Passos de A devem ser 7000, foram {res_summary_a.data['steps_total']}"
 
         # Usuario B executa compute_daily_summary
-        res_summary_b = client_b.rpc("compute_daily_summary", {"target_date": target_date}).execute()
+        res_summary_b = client_b.schema("alexandria_priv").rpc("compute_daily_summary", {"target_date": target_date}).execute()
         assert res_summary_b.data is not None
         assert res_summary_b.data["steps_total"] == 3000, f"Passos de B devem ser 3000, foram {res_summary_b.data['steps_total']}"
 

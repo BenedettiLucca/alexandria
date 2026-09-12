@@ -489,13 +489,14 @@ export function registerHealthTools(
       const errors: string[] = [];
 
       for (const d of dates) {
-        const { error: rpcError } = await client.rpc(
-          "compute_daily_summary",
-          {
+        // D-ENV-PGCRASH: funcao vive em schema nao-exposto (segfault nativo
+        // do PG 17.6 parseia-a sob anon no public). Schema-qualified aqui.
+        const { error: rpcError } = await client
+          .schema("alexandria_priv")
+          .rpc("compute_daily_summary", {
             target_date: d,
             p_user_id: userId,
-          },
-        );
+          });
         if (rpcError) {
           errors.push(`${d}: ${rpcError.message}`);
         } else {

@@ -73,6 +73,9 @@ def test_canonical_rpcs_callable_via_postgrest(service_client, run_sql):
     }).execute()
     assert isinstance(res0.data, int)
 
+    # Cleanup imediato: snapshot rows poluem outros testes via report default
+    run_sql(f"DELETE FROM coverage_snapshots WHERE user_id = '{owner_id}' AND producer = 'scheduler'")
+
     # Sem owner deve falhar (default-deny)
     with pytest.raises(APIError):
         service_client.rpc("capture_coverage_snapshot", {}).execute()
