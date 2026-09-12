@@ -91,54 +91,35 @@ def import_records(conn, supabase, config, stats=None):
             continue
 
         for row in rows:
-            rec = dict(zip(cols, row))
+            try:
+                rec = dict(zip(cols, row))
 
-            ts_raw = config.get("get_timestamp")(rec)
-            if ts_raw is None:
-                continue
-
-            # Optional filter: skip rows that don't have relevant data
-            filter_fn = config.get("filter_fn")
-            if filter_fn and not filter_fn(rec):
-                continue
-
-            ts = format_timestamp(ts_raw)
-            external_id = config["build_external_id"](rec)
-
-            if dedup_by_external_id(
-                supabase, "health_entries", "health-connect", external_id
-            ):
-                skipped += 1
-                continue
-
-            value = config["build_value"](rec)
-            numeric_value = config.get(
-                "extract_numeric",
-                lambda r, v: extract_numeric_value(config["entry_type"], v),
-            )(rec, value)
-
-            record = {
-                "entry_type": config["entry_type"],
-                "timestamp": ts,
-                "numeric_value": numeric_value,
-                "value": value,
-                "source": "health-connect",
-                "external_id": external_id,
-                "tags": ["health-connect"] + config["tags"],
-                "metadata": {"import_fingerprint": external_id},
-            }
-
-            end_raw = rec.get("end_time") or rec.get("endtime")
-            if end_raw and ts_raw:
-                record["duration_s"] = int((end_raw - ts_raw) / 1000)
-
-            if config.get("omit_none_values"):
-                record["value"] = {k: v for k, v in value.items() if v is not None}
-
-            upsert_record(
-                supabase, "health_entries", record, "health-connect", external_id
-            )
-            imported += 1
+                ts_raw = config.get("get_timestamp")(rec)
+                if ts_raw is None:
+                    continue
+                filter_fn = config.get("filter_fn")
+                if filter_fn and not filter_fn(rec):
+                    continue
+                ts = format_timestamp(ts_raw)
+                external_id = config["build_external_id"](rec)
+                value = config["build_value"](rec)
+                numeric_value = config.get("extract_numeric", lambda r, v: extract_numeric_value(config["entry_type"], v))(rec, value)
+                record = {"entry_type": config["entry_type"], "timestamp": ts, "numeric_value": numeric_value, "value": value, "source": "health-connect", "external_id": external_id, "tags": ["health-connect"] + config["tags"], "metadata": {"import_fingerprint": external_id}}
+                end_raw = rec.get("end_time") or rec.get("endtime")
+                if end_raw and ts_raw:
+                    record["duration_s"] = int((end_raw - ts_raw) / 1000)
+                if config.get("omit_none_values"):
+                    record["value"] = {k: v for k, v in value.items() if v is not None}
+                outcome = upsert_record(supabase, "health_entries", record, "health-connect", external_id)
+                outcome_data = getattr(outcome, "data", None)
+                if isinstance(outcome_data, dict) and outcome_data.get("status") == "unchanged":
+                    skipped += 1
+                else:
+                    imported += 1
+            except (ValueError, TypeError, KeyError) as exc:
+                if stats is not None:
+                    stats["failed"] = stats.get("failed", 0) + 1
+                logger.warning("Failed to import row: %s", type(exc).__name__)
 
     label = config["label"]
     print(f"  {label}: {imported} entries imported, {skipped} skipped")
@@ -152,7 +133,7 @@ STEPS_CONFIG = {
     "label": "Steps",
     "build_value": lambda r: {"count": int(r.get("count") or r.get("steps") or 0)},
     "build_external_id": lambda r: sha256(
-        f"hc-steps-{format_date(r.get('start_time') or r.get('starttime'))}".encode()
+        f"hc-steps-{r.get('id') or r.get('start_time') or r.get('starttime')}".encode()
     ).hexdigest(),
     "get_timestamp": lambda r: r.get("start_time") or r.get("starttime"),
 }
@@ -211,7 +192,8 @@ EXERCISE_CONFIG = {
                 "title",
                 "notes",
             ]
-            if r.get(f)
+                    if r.get(f) is not None
+
         },
     },
     "extract_numeric": lambda r, v: (
@@ -339,7 +321,8 @@ NUTRITION_CONFIG = {
                 "sodium",
                 "caffeine",
             ]
-            if r.get(f)
+                    if r.get(f) is not None
+
         },
     },
     "build_external_id": lambda r: sha256(
@@ -431,7 +414,8 @@ def main():
         processed=total_processed,
         imported=total_imported,
         skipped=total_skipped,
-        failed=stats["failed_tables"],
+        failed=stats.get("failed", 0),
+        failed_tables=stats["failed_tables"],
     )
 
     if stats["failed_tables"]:

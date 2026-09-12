@@ -1,6 +1,7 @@
 import os
 import sys
 import importlib.util
+from unittest import TestCase as _UTCase
 from unittest.mock import patch, MagicMock
 
 
@@ -125,7 +126,27 @@ EXERCISE_SESSIONS_RESPONSE = {
 }
 
 
-class TestSyncSteps:
+class TestSyncSteps(_UTCase):
+    @patch(f"{SYNC_MOD}._api_get")
+    def test_imports_zero_steps_as_valid_value(self, mock_api):
+        """Zero é dado válido: dia sedentário não pode ser descartado."""
+        mock_api.return_value = {
+            "bucket": [{
+                "dataset": [{
+                    "point": [{
+                        "startTimeNanos": "1700000000000000000",
+                        "endTimeNanos": "1700008640000000000",
+                        "value": [{"intVal": 0}],
+                    }]
+                }]
+            }]
+        }
+        creds = make_mock_creds()
+        supabase = make_mock_supabase()
+        imported, skipped = sync_steps(creds, supabase, 1700000000000, 1700008640000)
+        self.assertEqual(imported, 1)
+        self.assertEqual(skipped, 0)
+
     @patch(f"{SYNC_MOD}._api_get")
     def test_imports_steps_correctly(self, mock_api):
         mock_api.return_value = AGGREGATE_RESPONSE_STEPS
@@ -135,8 +156,8 @@ class TestSyncSteps:
         imported, skipped = sync_steps(creds, supabase, 1699900000000, 1700100000000)
 
         assert imported == 1
-        insert_calls = supabase.table.return_value.insert.call_args_list
-        record = insert_calls[0][0][0]
+        rpc_call = supabase.rpc.call_args_list[-1]
+        record = {k[2:] if k.startswith("p_") else k: v for k, v in rpc_call[0][1].items()}
         assert record["entry_type"] == "steps"
         assert record["numeric_value"] == 8500
         assert record["value"] == {"count": 8500}
@@ -178,8 +199,8 @@ class TestSyncWeight:
         imported, skipped = sync_weight(creds, supabase, 1699900000000, 1700100000000)
 
         assert imported == 1
-        insert_calls = supabase.table.return_value.insert.call_args_list
-        record = insert_calls[0][0][0]
+        rpc_call = supabase.rpc.call_args_list[-1]
+        record = {k[2:] if k.startswith("p_") else k: v for k, v in rpc_call[0][1].items()}
         assert record["entry_type"] == "weight"
         assert record["numeric_value"] == 80.5
         assert record["value"] == {"weight_kg": 80.5}
@@ -211,8 +232,8 @@ class TestSyncHeartRate:
         )
 
         assert imported == 1
-        insert_calls = supabase.table.return_value.insert.call_args_list
-        record = insert_calls[0][0][0]
+        rpc_call = supabase.rpc.call_args_list[-1]
+        record = {k[2:] if k.startswith("p_") else k: v for k, v in rpc_call[0][1].items()}
         assert record["entry_type"] == "heart_rate"
         assert record["numeric_value"] == 72
         assert record["value"] == {"bpm": 72}
@@ -234,7 +255,7 @@ class TestSyncHeartRate:
         assert skipped == 1
 
 
-class TestSyncSleep:
+class TestSyncSleep(_UTCase):
     @patch(f"{SYNC_MOD}._api_get")
     def test_imports_sleep_correctly(self, mock_sleep):
         mock_sleep.return_value = SLEEP_SESSIONS_RESPONSE
@@ -244,8 +265,8 @@ class TestSyncSleep:
         imported, skipped = sync_sleep(creds, supabase, 1699900000000, 1700100000000)
 
         assert imported == 1
-        insert_calls = supabase.table.return_value.insert.call_args_list
-        record = insert_calls[0][0][0]
+        rpc_call = supabase.rpc.call_args_list[-1]
+        record = {k[2:] if k.startswith("p_") else k: v for k, v in rpc_call[0][1].items()}
         assert record["entry_type"] == "sleep"
         duration_hours = (1700000000000 - 1699970000000) / 1000 / 3600
         assert record["numeric_value"] == round(duration_hours, 1)
@@ -258,14 +279,12 @@ class TestSyncSleep:
         mock_sleep.return_value = SLEEP_SESSIONS_RESPONSE
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
-            {"id": "1"}
-        ]
 
         imported, skipped = sync_sleep(creds, supabase, 1699900000000, 1700100000000)
 
-        assert imported == 0
-        assert skipped == 1
+        # Semântica nova: upsert atômico regrava (imported), não "skipa"
+        self.assertEqual(imported, 1)
+        self.assertEqual(skipped, 0)
 
     @patch(f"{SYNC_MOD}._api_get")
     def test_no_data_returns_zero(self, mock_sleep):
@@ -279,7 +298,7 @@ class TestSyncSleep:
         assert skipped == 0
 
 
-class TestSyncExercise:
+class TestSyncExercise(_UTCase):
     @patch(f"{SYNC_MOD}._api_get")
     def test_imports_exercise_correctly(self, mock_api):
         mock_api.return_value = EXERCISE_SESSIONS_RESPONSE
@@ -289,8 +308,8 @@ class TestSyncExercise:
         imported, skipped = sync_exercise(creds, supabase, 1699900000000, 1700100000000)
 
         assert imported == 1
-        insert_calls = supabase.table.return_value.insert.call_args_list
-        record = insert_calls[0][0][0]
+        rpc_call = supabase.rpc.call_args_list[-1]
+        record = {k[2:] if k.startswith("p_") else k: v for k, v in rpc_call[0][1].items()}
         assert record["entry_type"] == "exercise"
         assert record["numeric_value"] == 60
         assert record["duration_s"] == 3600
@@ -313,17 +332,15 @@ class TestSyncExercise:
         mock_api.return_value = EXERCISE_SESSIONS_RESPONSE
         creds = make_mock_creds()
         supabase = make_mock_supabase()
-        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
-            {"id": "1"}
-        ]
 
         imported, skipped = sync_exercise(creds, supabase, 1699900000000, 1700100000000)
 
-        assert imported == 0
-        assert skipped == 1
+        # Semântica nova: upsert atômico regrava (imported), não "skipa"
+        self.assertEqual(imported, 1)
+        self.assertEqual(skipped, 0)
 
 
-class TestSyncLogWritten:
+class TestSyncLogWritten(_UTCase):
     @patch(f"{SYNC_MOD}._api_get")
     def test_sync_log_written_after_sync(self, mock_api):
         mock_api.return_value = AGGREGATE_RESPONSE_STEPS
@@ -332,8 +349,8 @@ class TestSyncLogWritten:
 
         sync_steps(creds, supabase, 1699900000000, 1700100000000)
 
-        insert_calls = supabase.table.return_value.insert.call_args_list
-        assert len(insert_calls) >= 1
+        rpc_call = supabase.rpc.call_args_list[-1]
+        assert supabase.rpc.call_count >= 1
 
 
 class TestSyncExceptions:

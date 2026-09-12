@@ -48,7 +48,10 @@ import sys
 import json
 import argparse
 import logging
-import subprocess
+import stat
+import tempfile
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -96,6 +99,22 @@ def get_credentials():
         )
     )
 
+    def save_credentials(credentials):
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        mode = token_path.stat().st_mode & 0o777 if token_path.exists() else 0o600
+        fd, temp_name = tempfile.mkstemp(prefix=f".{token_path.name}.", dir=token_path.parent)
+        try:
+            os.fchmod(fd, mode or 0o600)
+            with os.fdopen(fd, "w") as token_file:
+                token_file.write(credentials.to_json())
+                token_file.flush()
+                os.fsync(token_file.fileno())
+            os.replace(temp_name, token_path)
+            os.chmod(token_path, mode or 0o600)
+        finally:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)
+
     # Check for existing token
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
@@ -105,7 +124,7 @@ def get_credentials():
             from google.auth.transport.requests import Request
 
             creds.refresh(Request())
-            token_path.write_text(creds.to_json())
+            save_credentials(creds)
             return creds
 
     # New OAuth flow
@@ -117,28 +136,25 @@ def get_credentials():
 
     flow = InstalledAppFlow.from_client_secrets_file(str(secrets_path), SCOPES)
     creds = flow.run_local_server(port=0)
-    token_path.write_text(creds.to_json())
+    save_credentials(creds)
     print(f"Credentials saved to {token_path}")
     return creds
 
 
 def _api_get(creds, url, method="GET", body=None):
-    """Single HTTP helper. Uses curl (urllib hangs on CachyOS)."""
-    headers = ["-H", f"Authorization: Bearer {creds.token}"]
-    if body:
-        headers += ["-H", "Content-Type: application/json", "-d", body]
+    request = urllib.request.Request(
+        url,
+        data=body.encode() if isinstance(body, str) else body,
+        headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
+        method=method,
+    )
     try:
-        r = subprocess.run(
-            ["curl", "-s", "-X", method] + headers + [url],
-            capture_output=True, text=True, timeout=30,
-        )
-        if r.returncode != 0:
-            print(f"  curl failed: {r.stderr.strip()}")
-            return None
-        return json.loads(r.stdout)
-    except Exception as e:
-        print(f"  API request failed: {e}")
-        logger.warning(f"API request failed: {e}", exc_info=True)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            if response.status < 200 or response.status >= 300:
+                return None
+            return json.loads(response.read())
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        logger.warning("API request failed: %s", type(exc).__name__)
         return None
 
 
@@ -207,7 +223,7 @@ def sync_aggregate(creds, supabase, start_ms, end_ms, config_name):
                 for val in point.get("value", []):
                     raw_val = val.get(cfg["value_key"])
 
-                if not raw_val or not start:
+                if raw_val is None or not start:
                     continue
 
                 if cfg["round"] is not None:
@@ -289,12 +305,6 @@ def sync_sleep(creds, supabase, start_ms, end_ms):
 
         duration_s = int((end - start) / 1000)
         external_id = f"ghc-sleep-{start}"
-        if dedup_by_external_id(
-            supabase, "health_entries", "health-connect", external_id
-        ):
-            skipped += 1
-            continue
-
         duration_hours = round(duration_s / 3600, 1)
         fingerprint = sha256(f"ghc-sleep-{start}-{end}".encode()).hexdigest()
 
@@ -348,12 +358,6 @@ def sync_exercise(creds, supabase, start_ms, end_ms):
 
         duration_s = int((end - start) / 1000) if end else None
         external_id = f"ghc-exercise-{start}"
-        if dedup_by_external_id(
-            supabase, "health_entries", "health-connect", external_id
-        ):
-            skipped += 1
-            continue
-
         fingerprint = sha256(f"ghc-exercise-{start}".encode()).hexdigest()
         numeric_value = round(duration_s / 60) if duration_s else None
 
@@ -400,6 +404,9 @@ def main():
     # Get OAuth credentials
     creds = get_credentials()
     print("Authenticated successfully.")
+
+    if args.auth:
+        return
 
     # Connect to Supabase
     supabase = connect_supabase()
