@@ -92,6 +92,25 @@ Deno.test("extractBodyCompMetrics returns null for missing fields", () => {
   assertEquals(metrics.body_fat_percent, null);
 });
 
+Deno.test("extractBodyCompMetrics projects producer aliases without inventing missing values", () => {
+  const metrics = extractBodyCompMetrics({ weight: 80.5, body_fat_pct: 18.2, waist: 85 });
+  assertEquals(metrics.weight_kg, 80.5);
+  assertEquals(metrics.body_fat_percent, 18.2);
+  assertEquals(metrics.waist_cm, 85);
+  assertEquals(metrics.chest_cm, null);
+});
+
+Deno.test("formatBodyCompSummary preserves measurement context and date precision", () => {
+  const summary = formatBodyCompSummary([{
+    timestamp: "2026-06-06T12:00:00Z",
+    metrics: { weight_kg: 80 },
+    context: "evening",
+    precision: "date",
+  }] as any, [], { from: "2026-06-01", to: "2026-06-07" });
+  assertEquals(summary.includes("evening"), true);
+  assertEquals(summary.includes("date"), true);
+});
+
 Deno.test("computeBodyCompDelta computes up/down/flat correctly", () => {
   const current = {
     weight_kg: 80,

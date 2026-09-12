@@ -575,22 +575,35 @@ export function registerHealthTools(
 
       const { data: entriesData, error: entriesError } = await client
         .from("health_entries")
-        .select("timestamp, value, metadata")
+        .select("timestamp, numeric_value, value, metadata")
         .eq("user_id", userId)
         .eq("entry_type", "body_composition")
         .gte("timestamp", fromISO)
         .lte("timestamp", toISO)
-        .order("timestamp", { ascending: false });
+        .order("timestamp", { ascending: false })
+        .limit(366);
 
       if (entriesError) throw new Error(entriesError.message);
 
+      const { data: baselineData, error: baselineError } = await client
+        .from("health_entries")
+        .select("timestamp, numeric_value, value, metadata")
+        .eq("user_id", userId)
+        .eq("entry_type", "body_composition")
+        .lt("timestamp", fromISO)
+        .order("timestamp", { ascending: false })
+        .limit(1);
+
+      if (baselineError) throw new Error(baselineError.message);
+
       const { data: goalsData, error: goalsError } = await client
         .from("health_entries")
-        .select("value")
+        .select("timestamp, value")
         .eq("user_id", userId)
         .eq("entry_type", "measurement_goal")
-        .gte("timestamp", fromISO)
-        .lte("timestamp", toISO);
+        .lte("timestamp", toISO)
+        .order("timestamp", { ascending: false })
+        .limit(100);
 
       if (goalsError) throw new Error(goalsError.message);
 
@@ -598,17 +611,21 @@ export function registerHealthTools(
         return "No body composition entries found in the selected period.";
       }
 
+      const allEntries = [...entriesData, ...(baselineData || [])];
       const processedEntries = entriesData.map((e: any, i: number) => {
-        const metrics = extractBodyCompMetrics(
-          e.value as Record<string, unknown>,
-        );
-        const prev = entriesData[i + 1];
+        const value = (e.value || {}) as Record<string, unknown>;
+        if (e.numeric_value != null && value.weight_kg == null) {
+          value.weight_kg = e.numeric_value;
+        }
+        const metrics = extractBodyCompMetrics(value);
+        const prev = allEntries[i + 1];
         let delta;
         if (prev) {
-          const prevMetrics = extractBodyCompMetrics(
-            prev.value as Record<string, unknown>,
-          );
-          delta = computeBodyCompDelta(metrics, prevMetrics);
+          const previousValue = (prev.value || {}) as Record<string, unknown>;
+          if (prev.numeric_value != null && previousValue.weight_kg == null) {
+            previousValue.weight_kg = prev.numeric_value;
+          }
+          delta = computeBodyCompDelta(metrics, extractBodyCompMetrics(previousValue));
         }
         return {
           timestamp: e.timestamp,
@@ -619,16 +636,20 @@ export function registerHealthTools(
         };
       });
 
+      const latestMetrics = processedEntries[0]?.metrics || {};
       const processedGoals = (goalsData || []).map((g: any) => {
         const v = g.value ?? {};
+        const metricName = v.metric_name || v.metric || (v.target_weight_kg != null ? "weight_kg" : undefined);
+        const targetValue = v.target_value ?? v.target ?? v.target_weight_kg;
+        const status = v.status || (v.achieved === true ? "achieved" : "active");
         return {
-          metric_name: v.metric_name,
-          target_value: v.target_value,
-          current_value: v.current_value,
-          target_date: v.target_date,
-          status: v.status,
+          metric_name: metricName,
+          target_value: targetValue,
+          current_value: v.current_value ?? (metricName ? latestMetrics[metricName] ?? null : null),
+          target_date: v.target_date ?? null,
+          status,
         };
-      });
+      }).filter((g: any) => g.metric_name && typeof g.target_value === "number" && Number.isFinite(g.target_value) && g.status !== "cancelled");
 
       return formatBodyCompSummary(
         processedEntries,
