@@ -61,9 +61,16 @@ def test_canonical_rpcs_exist_in_pg_proc_and_information_schema(run_sql):
 def test_canonical_rpcs_callable_via_postgrest(service_client, run_sql):
     """Valida execução real dos RPCs via cliente PostgREST/Supabase."""
     # 0. capture_coverage_snapshot é fail-closed: exige owner explícito (#41/T17)
-    owner_row = run_sql("SELECT id FROM auth.users ORDER BY created_at LIMIT 1")
-    owner_id = str(owner_row[0]["id"] if isinstance(owner_row, list) else owner_row["id"])
-    assert owner_id, "seed user ausente"
+    # Cria o PRÓPRIO user (não depende de state de outros testes — CI roda num banco limpo).
+    import uuid as _uuid
+    owner_id = str(_uuid.uuid4())
+    service_client.auth.admin.create_user({
+        "email": f"canonical-rpc-{_uuid.uuid4().hex[:8]}@example.com",
+        "password": "TestPassword123!",
+        "email_confirm": True,
+    })
+    users = run_sql(f"SELECT id FROM auth.users WHERE email LIKE 'canonical-rpc-%'")
+    owner_id = str(users[0]["id"])
     res0 = service_client.rpc("capture_coverage_snapshot", {
         "p_target_days": 7,
         "p_source_kind": "health",
@@ -93,6 +100,9 @@ def test_canonical_rpcs_callable_via_postgrest(service_client, run_sql):
         {"query_embedding": zero_vec, "match_threshold": 0.5, "match_count": 5},
     ).execute()
     assert isinstance(res3.data, list)
+
+    # cleanup: user criado neste teste
+    run_sql(f"DELETE FROM auth.users WHERE email LIKE 'canonical-rpc-%'")
 
 
 def test_rpc_invalid_payload_fails_with_apierror(service_client):
