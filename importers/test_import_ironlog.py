@@ -203,6 +203,22 @@ def create_mock_supabase(dedup_exists=False):
     return mock_supabase
 
 
+def _rpc_nth(mock_supabase, rpc_name, idx=-1):
+    recs = _rpc_records(mock_supabase, rpc_name)
+    return recs[idx]
+
+
+def _rpc_records(mock_supabase, rpc_name):
+    """Compat: expõe payloads das RPCs no formato [call][args][record] dos testes antigos."""
+    out = []
+    for c in mock_supabase.rpc.call_args_list:
+        if c[0][0] != rpc_name:
+            continue
+        rec = {k[2:] if k.startswith("p_") else k: v for k, v in c[0][1].items()}
+        out.append(((rec,),))
+    return out
+
+
 class TestImportSessions:
     def test_groups_sets_by_exercise_name(self):
         db = create_test_db()
@@ -212,11 +228,7 @@ class TestImportSessions:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("name")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         assert len(insert_calls) == 1
         record = insert_calls[0][0][0]
         exercise_names = [e["name"] for e in record["exercises"]]
@@ -234,11 +246,7 @@ class TestImportSessions:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("name")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         record = insert_calls[0][0][0]
         expected_volume = 80.0 * 5 + 80.0 * 5 + 40.0 * 8
         assert record["volume_kg"] == expected_volume
@@ -252,11 +260,7 @@ class TestImportSessions:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("workout_type")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         assert insert_calls[0][0][0]["workout_type"] == "strength"
         db.close()
 
@@ -268,11 +272,7 @@ class TestImportSessions:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("workout_type")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         assert insert_calls[0][0][0]["workout_type"] == "cardio"
         db.close()
 
@@ -284,11 +284,7 @@ class TestImportSessions:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("workout_type")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         assert insert_calls[0][0][0]["workout_type"] == "other"
         db.close()
 
@@ -300,8 +296,9 @@ class TestImportSessions:
 
         imported, skipped = import_sessions(db_path, mock_supabase)
 
-        assert imported == 0
-        assert skipped >= 1
+        # Semântica nova: upsert atômico idempotente regrava (fix #59)
+        assert imported >= 1
+        assert skipped == 0
         actual_inserts = [
             c
             for c in mock_supabase.table.return_value.insert.call_args_list
@@ -318,11 +315,7 @@ class TestImportSessions:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("duration_s")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         assert insert_calls[0][0][0]["duration_s"] == 3600
         db.close()
 
@@ -340,11 +333,7 @@ class TestImportBodyMetrics:
 
         import_body_metrics(db_path, mock_supabase)
 
-        weight_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("entry_type") == "weight"
-        ]
+        weight_calls = [c for c in _rpc_records(mock_supabase, "upsert_health_entry") if c[0][0].get("entry_type") == "weight"]
         assert len(weight_calls) >= 2
         assert weight_calls[0][0][0]["numeric_value"] == 80.5
         db.close()
@@ -361,11 +350,7 @@ class TestImportBodyMetrics:
 
         import_body_metrics(db_path, mock_supabase)
 
-        bc_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("entry_type") == "body_composition"
-        ]
+        bc_calls = [c for c in _rpc_records(mock_supabase, "upsert_health_entry") if c[0][0].get("entry_type") == "body_composition"]
         assert len(bc_calls) >= 2
         for c in bc_calls:
             assert c[0][0]["entry_type"] == "body_composition"
@@ -400,13 +385,9 @@ class TestImportBodyMetrics:
 
         import_body_metrics(db_path, mock_supabase)
 
-        metric3_bc = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("external_id") == "1700172800000-measurements"
-        ]
+        metric3_bc = [c for c in _rpc_records(mock_supabase, "upsert_health_entry") if c[0][0].get("external_id") == "1700172800000-measurements"]
         assert len(metric3_bc) == 1
-        assert metric3_bc[0][0][0]["value"]["waist"] == 84.5
+        assert metric3_bc[0][0][0]["value"]["waist_cm"] == 84.5
         db.close()
 
 
@@ -432,7 +413,8 @@ class TestImportSessionsTwice:
         import_sessions(db_path, mock_supabase)
         imported1, _ = import_sessions(db_path, mock_supabase)
 
-        assert imported1 == 0
+        # Upsert idempotente: segunda execução regrava (não skipa)
+        assert imported1 >= 1
         db.close()
 
 
@@ -484,19 +466,11 @@ class TestImportFromJson:
         assert imported == 2
         assert skipped == 0
 
-        session_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("external_id") == "session-42"
-        ]
+        session_calls = [c for c in _rpc_records(mock_supabase, "upsert_training_log") if c[0][0].get("external_id") == "session-42"]
         assert len(session_calls) == 1
         assert session_calls[0][0][0]["workout_type"] == "strength"
 
-        metric_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("external_id") == "metric-1700000000000"
-        ]
+        metric_calls = [c for c in _rpc_records(mock_supabase, "upsert_health_entry") if c[0][0].get("external_id") == "metric-1700000000000"]
         assert len(metric_calls) == 1
         assert metric_calls[0][0][0]["entry_type"] == "weight"
 
@@ -543,23 +517,15 @@ class TestImportFromJson:
         assert imported == 2
         assert skipped == 0
 
-        pr_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("external_id") == "pr-weight-1"
-        ]
+        pr_calls = [c for c in _rpc_records(mock_supabase, "upsert_health_entry") if c[0][0].get("external_id") == "pr-weight-1"]
         assert len(pr_calls) == 1
         assert pr_calls[0][0][0]["entry_type"] == "personal_record"
         assert pr_calls[0][0][0]["value"]["exercise_name"] == "Supino Reto (Barra)"
 
-        goal_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("external_id") == "goal-waist-1"
-        ]
+        goal_calls = [c for c in _rpc_records(mock_supabase, "upsert_health_entry") if c[0][0].get("external_id") == "goal-waist-1"]
         assert len(goal_calls) == 1
         assert goal_calls[0][0][0]["entry_type"] == "measurement_goal"
-        assert goal_calls[0][0][0]["value"]["goal_type"] == "waist"
+        assert goal_calls[0][0][0]["value"]["metric_name"] == "waist"
 
     def test_dedup_on_reimport(self, tmp_path):
         json_data = {
@@ -657,11 +623,7 @@ class TestSoftDeleteFiltering:
 
         import_sessions(db_path, mock_supabase)
 
-        insert_calls = [
-            c
-            for c in mock_supabase.table.return_value.insert.call_args_list
-            if c[0][0].get("name")
-        ]
+        insert_calls = _rpc_records(mock_supabase, "upsert_training_log")
         record = insert_calls[0][0][0]
         expected_volume = 80.0 * 5 + 40.0 * 8  # one 80x5 set deleted
         assert record["volume_kg"] == expected_volume
@@ -693,7 +655,7 @@ class TestImportPersonalRecords:
 
         assert imported == 1
         assert skipped == 0
-        call = mock_supabase.table.return_value.insert.call_args_list[0]
+        call = _rpc_nth(mock_supabase, "upsert_health_entry", 0)
         assert call[0][0]["entry_type"] == "personal_record"
         assert call[0][0]["value"]["exercise_name"] == "Squat"
         assert call[0][0]["tags"] == ["iron-log", "personal-record", "weight"]
@@ -738,9 +700,9 @@ class TestImportMeasurementGoals:
 
         assert imported == 1
         assert skipped == 0
-        call = mock_supabase.table.return_value.insert.call_args_list[0]
+        call = _rpc_nth(mock_supabase, "upsert_health_entry", 0)
         assert call[0][0]["entry_type"] == "measurement_goal"
-        assert call[0][0]["value"]["goal_type"] == "waist"
+        assert call[0][0]["value"]["metric_name"] == "waist"
         assert call[0][0]["tags"] == ["iron-log", "measurement-goal"]
 
     def test_skips_goal_without_external_id(self):

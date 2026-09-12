@@ -18,12 +18,63 @@ from hashlib import sha256
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from importers.shared import (
     connect_supabase,
-    dedup_by_external_id,
     upsert_record,
     record_sync,
     format_timestamp,
     format_date,
 )
+
+
+def _date_timestamp(value):
+    if not value:
+        return None, None
+    if isinstance(value, (int, float)):
+        return format_timestamp(value), "millisecond"
+    text = str(value)
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return f"{text}T00:00:00+00:00", "date"
+    return text, "timestamp"
+
+
+def _canonical_body_metrics(metric):
+    names = {
+        "weight": "weight_kg",
+        "waist": "waist_cm",
+        "arm_right": "arm_cm",
+        "thigh_right": "thigh_cm",
+        "chest": "chest_cm",
+        "calf": "calf_cm",
+    }
+    return {
+        canonical: metric[field]
+        for field, canonical in names.items()
+        if metric[field] is not None
+    }
+
+
+def _normalise_json_session(session):
+    allowed = {
+        "workout_date", "workout_type", "name", "exercises", "duration_s",
+        "volume_kg", "numeric_value", "rpe", "notes", "tags", "metadata",
+    }
+    record = {key: session[key] for key in allowed if key in session}
+    record.setdefault("metadata", {})
+    record["metadata"] = dict(record["metadata"] or {})
+    record["metadata"].setdefault("source", "iron-log")
+    return record
+
+
+def _normalise_json_health(entry):
+    record = dict(entry)
+    record.pop("source", None)
+    record.pop("external_id", None)
+    timestamp, precision = _date_timestamp(record.get("timestamp"))
+    record["timestamp"] = timestamp
+    metadata = dict(record.get("metadata") or {})
+    if precision == "date":
+        metadata["date_precision"] = "date"
+    record["metadata"] = metadata
+    return record
 
 
 def import_sessions(db_path, supabase):
@@ -83,10 +134,6 @@ def import_sessions(db_path, supabase):
 
         external_id = str(session["id"])
 
-        if dedup_by_external_id(supabase, "training_logs", "iron-log", external_id):
-            skipped += 1
-            continue
-
         exercise_types = conn.execute(
             """
             SELECT DISTINCT e.type
@@ -124,11 +171,10 @@ def import_sessions(db_path, supabase):
             "exercises": exercises,
             "duration_s": duration_s,
             "volume_kg": round(total_volume, 2) if total_volume else None,
+            "numeric_value": session["body_weight"],
             "rpe": session["s_rpe"],
             "notes": session["notes"],
             "tags": ["iron-log", workout_type],
-            "event_time": format_timestamp(session["start_time"]),
-            "ingestion_source": "iron-log",
             "external_id": external_id,
             "metadata": {
                 "import_fingerprint": fingerprint,
@@ -199,7 +245,7 @@ def import_body_metrics(db_path, supabase):
                 "entry_type": "body_composition",
                 "timestamp": ts,
                 "numeric_value": m["weight"] if m["weight"] else None,
-                "value": measurements,
+                "value": _canonical_body_metrics(m),
                 "source": "iron-log",
                 "external_id": measurements_ext_id,
                 "tags": ["iron-log", "body-measurements"],
@@ -262,20 +308,22 @@ def import_measurement_goals(goals, supabase):
             skipped += 1
             continue
 
+        target_date, precision = _date_timestamp(goal.get("target_date"))
         record = {
             "entry_type": "measurement_goal",
-            "timestamp": goal.get("target_date"),
+            "timestamp": target_date,
             "numeric_value": goal.get("target_value"),
             "value": {
-                "goal_type": goal.get("type"),
+                "metric_name": goal.get("type"),
                 "target_value": goal.get("target_value"),
-                "start_date": goal.get("start_date"),
+                "current_value": goal.get("current_value"),
                 "target_date": goal.get("target_date"),
-                "achieved": goal.get("achieved"),
+                "status": "achieved" if goal.get("achieved") else "active",
             },
             "source": "iron-log",
             "external_id": ext_id,
             "tags": ["iron-log", "measurement-goal"],
+            "metadata": {"date_precision": precision} if precision == "date" else {},
         }
 
         upsert_record(supabase, "health_entries", record, "iron-log", ext_id)
@@ -303,7 +351,9 @@ def import_from_json(json_path, supabase):
             if not ext_id:
                 s_skipped += 1
                 continue
-            upsert_record(supabase, "training_logs", session, "iron-log", ext_id)
+            upsert_record(
+                supabase, "training_logs", _normalise_json_session(session), "iron-log", ext_id
+            )
             s_imported += 1
             print(f"  Imported: {session.get('workout_date')} - {session.get('name')}")
         print(f"\nSessions: {s_imported} imported, {s_skipped} skipped")
@@ -320,7 +370,9 @@ def import_from_json(json_path, supabase):
             if not ext_id:
                 m_skipped += 1
                 continue
-            upsert_record(supabase, "health_entries", metric, "iron-log", ext_id)
+            upsert_record(
+                supabase, "health_entries", _normalise_json_health(metric), "iron-log", ext_id
+            )
             m_imported += 1
             print(f"  Imported: {metric.get('entry_type')} - {metric.get('timestamp')}")
         print(f"\nBody metrics: {m_imported} imported, {m_skipped} skipped")
