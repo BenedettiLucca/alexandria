@@ -153,8 +153,7 @@ participants: ["Alice"]
             assert imported == 1
             assert skipped == 0
             assert failed == 0
-            mock_supabase.table.return_value.insert.assert_called_once()
-            mock_supabase.table.return_value.update.assert_not_called()
+            mock_supabase.rpc.assert_called_once()
             
             # 2. Reset mock calls
             mock_supabase.reset_mock()
@@ -171,8 +170,7 @@ participants: ["Alice"]
             assert imported == 0
             assert skipped == 1
             assert failed == 0
-            mock_supabase.table.return_value.insert.assert_not_called()
-            mock_supabase.table.return_value.update.assert_not_called()
+            mock_supabase.rpc.assert_not_called()
 
             # 3. Reset mock calls
             mock_supabase.reset_mock()
@@ -188,8 +186,7 @@ participants: ["Alice"]
             assert imported == 1
             assert skipped == 0
             assert failed == 0
-            mock_supabase.table.return_value.update.assert_called_once()
-            mock_supabase.table.return_value.insert.assert_not_called()
+            mock_supabase.rpc.assert_called_once()
 
 
     @patch("importers.meetcap.import_meetcap_briefs.connect_supabase")
