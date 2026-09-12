@@ -1,7 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { AuthContext, supabase } from "../config.ts";
+import { getDataContext } from "../data_context.ts";
 import { getEmbedding, wrapHandler } from "../helpers.ts";
+import { normalizeHealthEntry } from "../health_contract.ts";
 import type {
   CoverageRow,
   HealthEntryRow,
@@ -9,7 +11,6 @@ import type {
   SearchHealthEntryRow,
   TransitionRow,
 } from "../types.ts";
-
 import {
   computeBodyCompDelta,
   extractBodyCompMetrics,
@@ -22,23 +23,46 @@ import {
   recordToText,
 } from "../lib.ts";
 
+/**
+ * Resolves the database client and user ID for health operations.
+ * Prefers request-scoped DataContext; falls back to getAuth callback if present.
+ */
+function getContext(getAuth?: () => AuthContext | undefined): {
+  client: any;
+  userId: string;
+} {
+  try {
+    const ctx = getDataContext();
+    return { client: ctx.client, userId: ctx.userId };
+  } catch {
+    const auth = getAuth ? getAuth() : undefined;
+    if (auth?.userId) {
+      return { client: supabase, userId: auth.userId };
+    }
+    throw new Error("Request context or authentication is required");
+  }
+}
+
 export function registerHealthTools(
   server: McpServer,
-  _getAuth: () => AuthContext | undefined,
+  getAuth?: () => AuthContext | undefined,
 ) {
+  // 1. log_health
   server.registerTool(
     "log_health",
     {
       title: "Log Health Entry",
       description:
-        "Record a health data point. Use for manual logging or data imports from Health Connect.",
+        "Record a health metric (sleep, exercise, heart rate, steps, weight, body composition, etc.). Uses canonical contract validation, atomic upsert, and explicit indexing status.",
       inputSchema: {
         entry_type: z.string().describe(
-          "Type: sleep, exercise, heart_rate, steps, weight, water, nutrition, blood_pressure, stress, cycle, body_composition",
+          "Type: steps, weight, heart_rate, sleep, exercise, body_composition, measurement_goal",
         ),
-        timestamp: z.string().describe("ISO 8601 timestamp"),
+        timestamp: z.string().describe(
+          "ISO 8601 timestamp with timezone offset (e.g. 2026-09-12T10:00:00Z or 2026-09-12T07:00:00-03:00)",
+        ),
         duration_s: z.number().optional().describe("Duration in seconds"),
-        value: z.record(z.any()).describe(
+        value: z.record(z.any()).optional().describe(
           "Health data as JSON (varies by type)",
         ),
         tags: z.array(z.string()).optional(),
@@ -48,69 +72,114 @@ export function registerHealthTools(
         external_id: z.string().optional().describe(
           "External record ID from source system for upsert dedup",
         ),
+        source: z.string().optional().describe(
+          "Source system (defaults to mcp)",
+        ),
       },
     },
     wrapHandler(
-      async (
-        {
-          entry_type,
-          timestamp,
-          duration_s,
-          value,
-          tags,
-          numeric_value,
-          external_id,
-        },
-      ) => {
-        const row: Record<string, unknown> = {
-          entry_type,
-          timestamp,
-          duration_s: duration_s || null,
-          value,
-          tags: tags || [],
-          source: "mcp",
-        };
-        if (numeric_value !== undefined) row.numeric_value = numeric_value;
-        if (external_id !== undefined) row.external_id = external_id;
+      async ({
+        entry_type,
+        timestamp,
+        duration_s,
+        value,
+        tags,
+        numeric_value,
+        external_id,
+        source,
+      }) => {
+        const { client, userId } = getContext(getAuth);
 
-        const { data, error } = await supabase
-          .from("health_entries")
-          .insert(row)
-          .select("id")
-          .single();
-
-        if (error) throw new Error("Health log failed");
-        const id = data?.id;
-
+        // Normalize and validate entry with canonical health contract
+        let normalized: Record<string, unknown>;
         try {
-          const text = recordToText(entry_type, {
-            ...row,
-            timestamp: row.timestamp,
+          normalized = normalizeHealthEntry({
+            entry_type,
+            timestamp,
+            duration_s,
+            value: value ?? {},
+            numeric_value,
+            external_id,
+            source: source || "mcp",
+          });
+        } catch (err: any) {
+          throw new Error(`Health entry validation failed: ${err.message}`);
+        }
+
+        // Atomic upsert scoped by authenticated owner
+        const { data: upsertResult, error: upsertErr } = await client.rpc(
+          "upsert_health_entry",
+          {
+            p_entry_type: normalized.entry_type,
+            p_timestamp: normalized.timestamp,
+            p_value: normalized.value || {},
+            p_numeric_value: normalized.numeric_value ?? null,
+            p_duration_s: normalized.duration_s ?? null,
+            p_tags: tags || [],
+            p_source: normalized.source || "mcp",
+            p_external_id: normalized.external_id ?? null,
+            p_metadata: { contract_version: normalized.contract_version },
+            p_user_id: userId,
+          },
+        );
+
+        if (upsertErr) {
+          throw new Error(`Health log upsert failed: ${upsertErr.message}`);
+        }
+
+        const id = upsertResult?.id;
+        const status = upsertResult?.status || "created";
+
+        // Explicit indexing status
+        let indexingStatus = "pending";
+        try {
+          const text = recordToText(normalized.entry_type as string, {
+            entry_type: normalized.entry_type,
+            timestamp: normalized.timestamp,
+            numeric_value: normalized.numeric_value,
+            value: normalized.value,
+            tags: tags || [],
           });
           const embedding = await getEmbedding(text);
-          await supabase.from("health_entries").update({ embedding }).eq(
-            "id",
-            id,
-          );
-        } catch { /* non-blocking */ }
+          if (embedding && id) {
+            const { error: embErr } = await client
+              .from("health_entries")
+              .update({
+                embedding,
+                embedding_status: "ready",
+                embedded_at: new Date().toISOString(),
+              })
+              .eq("id", id)
+              .eq("user_id", userId);
+            if (!embErr) {
+              indexingStatus = "ready";
+            }
+          }
+        } catch {
+          // Non-blocking: background outbox will reconcile
+          indexingStatus = "pending";
+        }
 
-        return `Health entry logged: ${entry_type} at ${
-          new Date(timestamp).toLocaleString()
-        }`;
+        return `Health entry logged: ${normalized.entry_type} at ${
+          new Date(normalized.timestamp as string).toISOString()
+        } [status: ${status}, indexing: ${indexingStatus}]`;
       },
     ),
   );
 
+  // 2. query_health
   server.registerTool(
     "query_health",
     {
-      title: "Query Health Data",
+      title: "Query Health Entries",
       description:
-        "Search and filter health entries. Use when the user asks about their health history.",
+        "Browse raw health entries with optional filtering by type, date range, or limit. Range filters take precedence; historical 'event_to' anchors the time window.",
       inputSchema: {
         entry_type: z.string().optional().describe("Filter by type"),
         days: z.number().optional().describe("Last N days"),
-        limit: z.number().optional().default(20),
+        limit: z.number().optional().default(20).describe(
+          "Maximum entries to return (cap, default 20, max 100)",
+        ),
         event_from: z.string().optional().describe(
           "Filter from timestamp (ISO 8601)",
         ),
@@ -120,83 +189,110 @@ export function registerHealthTools(
       },
     },
     wrapHandler(async ({ entry_type, days, limit, event_from, event_to }) => {
-      let q = supabase
+      const { client, userId } = getContext(getAuth);
+
+      if (event_from && isNaN(Date.parse(event_from))) {
+        throw new Error("Invalid event_from timestamp format");
+      }
+      if (event_to && isNaN(Date.parse(event_to))) {
+        throw new Error("Invalid event_to timestamp format");
+      }
+      if (event_from && event_to && new Date(event_from) > new Date(event_to)) {
+        throw new Error("event_from must be less than or equal to event_to");
+      }
+
+      let fromTs = event_from;
+      let toTs = event_to;
+
+      if (!fromTs && days !== undefined) {
+        if (days < 0) throw new Error("days must be non-negative");
+        const anchor = toTs ? new Date(toTs) : new Date();
+        const since = new Date(anchor.getTime() - days * 24 * 60 * 60 * 1000);
+        fromTs = since.toISOString();
+      }
+
+      const cap = Math.min(Math.max(limit || 20, 1), 100);
+      let q = client
         .from("health_entries")
-        .select("entry_type, timestamp, duration_s, numeric_value, value, tags")
+        .select(
+          "id, entry_type, timestamp, duration_s, value, numeric_value, tags, source, created_at, embedding_status",
+        )
+        .eq("user_id", userId)
         .order("timestamp", { ascending: false })
-        .limit(limit);
+        .limit(cap + 1);
 
       if (entry_type) q = q.eq("entry_type", entry_type);
-      if (days) {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        q = q.gte("timestamp", since.toISOString());
-      }
-      if (event_from) q = q.gte("timestamp", event_from);
-      if (event_to) q = q.lte("timestamp", event_to);
+      if (fromTs) q = q.gte("timestamp", fromTs);
+      if (toTs) q = q.lte("timestamp", toTs);
 
       const { data, error } = await q;
-      if (error) throw new Error(error.message);
-      if (!data?.length) return "No health entries found.";
+      if (error) throw new Error(`Health query failed: ${error.message}`);
+      if (!data || data.length === 0) return "No health entries found.";
 
-      const results = data.map(
-        (
-          e: Pick<
-            HealthEntryRow,
-            | "entry_type"
-            | "timestamp"
-            | "duration_s"
-            | "numeric_value"
-            | "value"
-            | "tags"
-          >,
-          i: number,
-        ) => formatHealthEntry(e, i),
+      const isTruncated = data.length > cap;
+      const rows = isTruncated ? data.slice(0, cap) : data;
+
+      const lines = rows.map((r: HealthEntryRow) =>
+        recordToText(r.entry_type, {
+          entry_type: r.entry_type,
+          timestamp: r.timestamp,
+          duration_s: r.duration_s,
+          value: r.value,
+          numeric_value: r.numeric_value,
+          tags: r.tags,
+          source: r.source,
+        })
       );
-      return `${data.length} health entries:\n\n${results.join("\n\n")}`;
+
+      let output = lines.join("\n");
+      if (isTruncated) {
+        output +=
+          `\n\n[Warning: Results truncated at ${cap} items. Refine date range or increase limit.]`;
+      }
+      return output;
     }),
   );
 
+  // 3. search_health
   server.registerTool(
     "search_health",
     {
-      title: "Search Health (Semantic)",
+      title: "Semantic Search Health",
       description:
-        "Search health entries by semantic meaning. Use when the user asks about health patterns like 'days I slept poorly', 'high heart rate episodes', 'when did I walk a lot'.",
+        "Semantic search across health entries using natural language (e.g. 'bad sleep this week', 'leg day squats', 'high heart rate during run'). Scoped to ready embeddings.",
       inputSchema: {
         query: z.string().describe("Natural language search query"),
         limit: z.number().optional().default(10),
         threshold: z.number().optional().default(0.3),
-        entry_type: z.string().optional().describe(
-          "Filter by entry type (e.g. sleep, steps, heart_rate)",
-        ),
+        entry_type: z.string().optional().describe("Filter by entry type"),
       },
     },
     wrapHandler(async ({ query, limit, threshold, entry_type }) => {
+      const { client, userId } = getContext(getAuth);
       const qEmb = await getEmbedding(query);
-      const { data, error } = await supabase.rpc("search_health_entries", {
+      const { data, error } = await client.rpc("search_health_entries", {
         query_embedding: qEmb,
         match_threshold: threshold,
         match_count: limit,
         filter_entry_type: entry_type || null,
+        p_user_id: userId,
       });
 
-      if (error) throw new Error("Health search failed");
+      if (error) throw new Error(`Search failed: ${error.message}`);
       if (!data || data.length === 0) {
         return `No health entries found matching "${query}".`;
       }
 
       const results = data.map(
-        (
-          t: SearchHealthEntryRow,
-          i: number,
-        ) => {
+        (t: HealthEntryRow & { similarity: number }, i: number) => {
           const parts = [
-            `--- ${i + 1}. ${(t.similarity! * 100).toFixed(1)}% match ---`,
-            `Type: ${t.entry_type}`,
-            `Date: ${new Date(t.timestamp).toLocaleString()}`,
+            `#${i + 1} [${t.entry_type.toUpperCase()}] ${
+              new Date(t.timestamp).toLocaleString()
+            } (similarity: ${(t.similarity * 100).toFixed(0)}%)`,
           ];
-          if (t.numeric_value != null) parts.push(`Value: ${t.numeric_value}`);
+          if (t.numeric_value !== null && t.numeric_value !== undefined) {
+            parts.push(`Value: ${t.numeric_value}`);
+          }
           if (t.duration_s) {
             parts.push(`Duration: ${Math.round(t.duration_s / 60)}min`);
           }
@@ -211,38 +307,63 @@ export function registerHealthTools(
     }),
   );
 
+  // 4. health_summary
   server.registerTool(
     "health_summary",
     {
       title: "Health Summary",
       description:
-        "View daily aggregated health summaries. Use when the user asks about their daily or weekly health overview, sleep stats, step counts, heart rate trends, or training volume.",
+        "View daily aggregated health summaries. Range (from/to) takes precedence over days; cap is separated from range and truncation is explicitly warned.",
       inputSchema: {
         days: z.number().optional().default(7).describe(
-          "Number of recent days to show",
+          "Number of recent days to show (used when date range is omitted)",
         ),
         from: z.string().optional().describe(
           "Start date YYYY-MM-DD (overrides days)",
         ),
         to: z.string().optional().describe(
-          "End date YYYY-MM-DD (overrides days)",
+          "End date YYYY-MM-DD (anchors window if from is omitted)",
+        ),
+        limit: z.number().optional().default(100).describe(
+          "Maximum number of summary days to return (cap, default 100, max 365)",
         ),
       },
     },
-    wrapHandler(async ({ days, from, to }) => {
-      let q = supabase
+    wrapHandler(async ({ days, from, to, limit }) => {
+      const { client, userId } = getContext(getAuth);
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (from && !dateRegex.test(from)) {
+        throw new Error("Invalid from date format, expected YYYY-MM-DD");
+      }
+      if (to && !dateRegex.test(to)) {
+        throw new Error("Invalid to date format, expected YYYY-MM-DD");
+      }
+      if (from && to && from > to) {
+        throw new Error("from date must be less than or equal to to date");
+      }
+
+      let fromDate = from;
+      let toDate = to;
+
+      if (!fromDate) {
+        const anchor = toDate ? new Date(toDate) : new Date();
+        const effectiveDays = Math.max(days || 7, 1);
+        const since = new Date(
+          anchor.getTime() - (effectiveDays - 1) * 24 * 60 * 60 * 1000,
+        );
+        fromDate = since.toISOString().split("T")[0];
+      }
+
+      const cap = Math.min(Math.max(limit || 100, 1), 365);
+      let q = client
         .from("health_summaries")
         .select("*")
+        .eq("user_id", userId)
         .order("date", { ascending: false })
-        .limit(days);
+        .limit(cap + 1);
 
-      if (from) q = q.gte("date", from);
-      if (to) q = q.lte("date", to);
-      if (!from) {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        q = q.gte("date", since.toISOString().split("T")[0]);
-      }
+      if (fromDate) q = q.gte("date", fromDate);
+      if (toDate) q = q.lte("date", toDate);
 
       const { data, error } = await q;
       if (error) throw new Error(error.message);
@@ -250,22 +371,25 @@ export function registerHealthTools(
         return "No summary computed yet. Use refresh_summary to generate one.";
       }
 
-      const lines = data.map((s: HealthSummaryRow) =>
+      const isTruncated = data.length > cap;
+      const rows = isTruncated ? data.slice(0, cap) : data;
+
+      const lines = rows.map((s: HealthSummaryRow) =>
         formatDailyHealthSummary(s)
       );
 
       let coverageDays = days || 7;
       if (from) {
-        const fromDate = new Date(from);
-        const toDate = to ? new Date(to) : new Date();
-        const diffMs = toDate.getTime() - fromDate.getTime();
+        const fDate = new Date(from);
+        const tDate = to ? new Date(to) : new Date();
+        const diffMs = tDate.getTime() - fDate.getTime();
         coverageDays = Math.max(
           1,
           Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 1,
         );
       }
 
-      const { data: covData, error: covError } = await supabase.rpc(
+      const { data: covData, error: covError } = await client.rpc(
         "compute_source_coverage",
         {
           target_days: coverageDays,
@@ -273,7 +397,7 @@ export function registerHealthTools(
       );
 
       let transitionMap: Record<string, TransitionRow> | undefined;
-      const { data: transData, error: transError } = await supabase.rpc(
+      const { data: transData, error: transError } = await client.rpc(
         "get_coverage_transition_report",
         { p_days: Math.max(coverageDays, 30) },
       );
@@ -289,7 +413,11 @@ export function registerHealthTools(
         warningsText = formatCoverageWarnings(covData, transitionMap);
       }
 
-      const summaryText = `${data.length} day(s):\n\n${lines.join("\n\n")}`;
+      let summaryText = `${rows.length} day(s):\n\n${lines.join("\n\n")}`;
+      if (isTruncated) {
+        summaryText +=
+          `\n\n[Warning: Summary results truncated at ${cap} days. Refine your date range to view all days.]`;
+      }
       if (warningsText) {
         return `${summaryText}\n\n${warningsText}`;
       }
@@ -297,29 +425,62 @@ export function registerHealthTools(
     }),
   );
 
+  // 5. refresh_summary
   server.registerTool(
     "refresh_summary",
     {
       title: "Refresh Summary",
       description:
-        "Compute or re-compute daily health summaries from raw health_entries and training_logs. Use after importing new data or to recalculate summaries.",
+        "Compute or re-compute daily health summaries from raw health_entries and training_logs. Refresh is bounded, owner-scoped, and reports errors honestly.",
       inputSchema: {
         date: z.string().optional().describe(
           "Single date YYYY-MM-DD to refresh",
         ),
-        days: z.number().optional().default(1).describe(
-          "Number of recent days to refresh (used when date is omitted)",
+        days: z.number().min(1).max(365).optional().default(1).describe(
+          "Number of recent days to refresh (used when date is omitted, max 365)",
+        ),
+        from: z.string().optional().describe(
+          "Start date YYYY-MM-DD to refresh",
+        ),
+        to: z.string().optional().describe(
+          "End date YYYY-MM-DD to refresh",
         ),
       },
     },
-    wrapHandler(async ({ date, days }) => {
+    wrapHandler(async ({ date, days, from, to }) => {
+      const { client, userId } = getContext(getAuth);
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (date && !dateRegex.test(date)) {
+        throw new Error("Invalid date format, expected YYYY-MM-DD");
+      }
+      if (from && !dateRegex.test(from)) {
+        throw new Error("Invalid from date format, expected YYYY-MM-DD");
+      }
+      if (to && !dateRegex.test(to)) {
+        throw new Error("Invalid to date format, expected YYYY-MM-DD");
+      }
+      if (from && to && from > to) {
+        throw new Error("from date must be less than or equal to to date");
+      }
+
       const dates: string[] = [];
       if (date) {
         dates.push(date);
+      } else if (from) {
+        const curr = new Date(from);
+        const end = to ? new Date(to) : new Date();
+        const maxRange = 365;
+        let count = 0;
+        while (curr <= end && count < maxRange) {
+          dates.push(curr.toISOString().split("T")[0]);
+          curr.setDate(curr.getDate() + 1);
+          count++;
+        }
       } else {
-        for (let i = 0; i < days; i++) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
+        const anchor = to ? new Date(to) : new Date();
+        const effectiveDays = Math.min(days || 1, 365);
+        for (let i = 0; i < effectiveDays; i++) {
+          const d = new Date(anchor.getTime() - i * 24 * 60 * 60 * 1000);
           dates.push(d.toISOString().split("T")[0]);
         }
       }
@@ -328,10 +489,11 @@ export function registerHealthTools(
       const errors: string[] = [];
 
       for (const d of dates) {
-        const { error: rpcError } = await supabase.rpc(
+        const { error: rpcError } = await client.rpc(
           "compute_daily_summary",
           {
             target_date: d,
+            p_user_id: userId,
           },
         );
         if (rpcError) {
@@ -342,36 +504,47 @@ export function registerHealthTools(
       }
 
       let result = `Refreshed ${computed} of ${dates.length} summary(s).`;
-      if (errors.length) result += `\n\nErrors:\n${errors.join("\n")}`;
+      if (errors.length) {
+        result += `\n\nErrors (${errors.length}):\n${errors.join("\n")}`;
+      }
       return result;
     }),
   );
 
+  // 6. delete_health_entry
   server.registerTool(
     "delete_health_entry",
     {
       title: "Delete Health Entry",
-      description: "Permanently delete a health entry by ID.",
+      description:
+        "Permanently delete a health entry by ID. Scoped strictly to the authenticated owner.",
       inputSchema: {
         id: z.string().uuid().describe("Health entry ID to delete"),
       },
     },
     wrapHandler(async ({ id }) => {
-      const { data, error } = await supabase
+      const { client, userId } = getContext(getAuth);
+      const { data, error } = await client
         .from("health_entries")
         .delete()
         .eq("id", id)
+        .eq("user_id", userId)
         .select("id, entry_type, timestamp")
-        .single();
+        .maybeSingle();
 
-      if (error) throw new Error("Health entry delete failed");
-      if (!data) throw new Error(`Health entry ${id} not found.`);
+      if (error) throw new Error(`Health entry delete failed: ${error.message}`);
+      if (!data) {
+        throw new Error(
+          `Health entry ${id} not found or belongs to another owner.`,
+        );
+      }
       return `Deleted health entry: ${data.entry_type} at ${
         new Date(data.timestamp).toLocaleString()
       }`;
     }),
   );
 
+  // 7. bodycomp_summary
   server.registerTool(
     "bodycomp_summary",
     {
@@ -387,6 +560,7 @@ export function registerHealthTools(
       },
     },
     wrapHandler(async ({ days, from, to }) => {
+      const { client, userId } = getContext(getAuth);
       const toDate = to ? new Date(to) : new Date();
       if (to && !to.includes("T")) toDate.setHours(23, 59, 59, 999);
 
@@ -399,9 +573,10 @@ export function registerHealthTools(
       const fromISO = fromDate.toISOString();
       const toISO = toDate.toISOString();
 
-      const { data: entriesData, error: entriesError } = await supabase
+      const { data: entriesData, error: entriesError } = await client
         .from("health_entries")
         .select("timestamp, value, metadata")
+        .eq("user_id", userId)
         .eq("entry_type", "body_composition")
         .gte("timestamp", fromISO)
         .lte("timestamp", toISO)
@@ -409,9 +584,10 @@ export function registerHealthTools(
 
       if (entriesError) throw new Error(entriesError.message);
 
-      const { data: goalsData, error: goalsError } = await supabase
+      const { data: goalsData, error: goalsError } = await client
         .from("health_entries")
         .select("value")
+        .eq("user_id", userId)
         .eq("entry_type", "measurement_goal")
         .gte("timestamp", fromISO)
         .lte("timestamp", toISO);
@@ -422,7 +598,7 @@ export function registerHealthTools(
         return "No body composition entries found in the selected period.";
       }
 
-      const processedEntries = entriesData.map((e, i) => {
+      const processedEntries = entriesData.map((e: any, i: number) => {
         const metrics = extractBodyCompMetrics(
           e.value as Record<string, unknown>,
         );
@@ -443,7 +619,7 @@ export function registerHealthTools(
         };
       });
 
-      const processedGoals = (goalsData || []).map((g) => {
+      const processedGoals = (goalsData || []).map((g: any) => {
         const v = g.value ?? {};
         return {
           metric_name: v.metric_name,
@@ -465,6 +641,7 @@ export function registerHealthTools(
     }),
   );
 
+  // 8. source_coverage_report
   server.registerTool(
     "source_coverage_report",
     {
@@ -478,7 +655,8 @@ export function registerHealthTools(
       },
     },
     wrapHandler(async ({ days }) => {
-      const { data, error } = await supabase.rpc("compute_source_coverage", {
+      const { client } = getContext(getAuth);
+      const { data, error } = await client.rpc("compute_source_coverage", {
         target_days: days || 7,
       });
       if (error) throw new Error(error.message);
@@ -487,12 +665,13 @@ export function registerHealthTools(
     }),
   );
 
+  // 9. coverage_transition_report
   server.registerTool(
     "coverage_transition_report",
     {
       title: "Coverage Transition Report",
       description:
-        "Report coverage transitions from persisted snapshots: NEW, ONGOING, or RECOVERED degradation per lane, degradation streaks, and trust-blocking lanes. Requires coverage snapshots to exist (run capture_coverage_snapshot or rely on the scheduled capture).",
+        "Report coverage transitions from persisted snapshots: NEW, ONGOING, or RECOVERED degradation per lane, degradation streaks, and trust-blocking lanes. Requires coverage snapshots to exist.",
       inputSchema: {
         days: z.number().optional().default(30).describe(
           "Number of recent days to analyze transitions",
@@ -500,7 +679,8 @@ export function registerHealthTools(
       },
     },
     wrapHandler(async ({ days }) => {
-      const { data, error } = await supabase.rpc(
+      const { client } = getContext(getAuth);
+      const { data, error } = await client.rpc(
         "get_coverage_transition_report",
         {
           p_days: days || 30,
