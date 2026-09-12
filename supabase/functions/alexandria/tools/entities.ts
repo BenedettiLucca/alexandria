@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AuthContext, supabase } from "../config.ts";
 import { wrapHandler } from "../helpers.ts";
 import type { MemoryRow, SyncLogRow } from "../types.ts";
+
 export function registerEntitiesTools(
   server: McpServer,
   _getAuth: () => AuthContext | undefined,
@@ -33,12 +34,6 @@ export function registerEntitiesTools(
       const { data, error } = await q;
       if (error) throw new Error(error.message);
       if (!data?.length) return `No entities found matching "${query}".`;
-
-      const entityIds = data.map((e) => e.id);
-      await supabase
-        .from("entity_mentions")
-        .select("entity_id", { count: "exact", head: true })
-        .in("entity_id", entityIds);
 
       const results = data.map(
         (e, i: number) => {
@@ -136,45 +131,27 @@ export function registerEntitiesTools(
       },
     },
     wrapHandler(async ({ entity_type, limit }) => {
-      let entityQ = supabase
-        .from("entities")
-        .select("id, name, entity_type, description, created_at");
+      // Bounded SQL aggregate query via RPC (bounded row transfer, ordered in database)
+      const { data, error } = await supabase.rpc("list_entities_ranked", {
+        p_entity_type: entity_type || null,
+        p_limit: limit || 25,
+      });
 
-      if (entity_type) entityQ = entityQ.eq("entity_type", entity_type);
-
-      const { data: entities, error: entityErr } = await entityQ;
-      if (entityErr) throw new Error(entityErr.message);
-      if (!entities?.length) return "No entities in the knowledge graph yet.";
-
-      const entityIds = entities.map((e) => e.id);
-      const { data: mentions } = await supabase
-        .from("entity_mentions")
-        .select("entity_id")
-        .in("entity_id", entityIds);
-
-      const countByEntity = new Map<string, number>();
-      for (const m of mentions || []) {
-        countByEntity.set(
-          m.entity_id,
-          (countByEntity.get(m.entity_id) || 0) + 1,
-        );
+      if (error) {
+        throw new Error("Failed to list entities: " + error.message);
+      }
+      if (!data || !data.length) {
+        return "No entities in the knowledge graph yet.";
       }
 
-      const sorted = entities
-        .map((e) => ({
-          ...e,
-          mention_count: countByEntity.get(e.id) || 0,
-        }))
-        .sort((a, b) => b.mention_count - a.mention_count)
-        .slice(0, limit);
+      const results = data.map((e: any, i: number) => {
+        const count = Number(e.mention_count || 0);
+        return `${i + 1}. ${e.name} (${e.entity_type}) — ${count} mention${
+          count === 1 ? "" : "s"
+        }`;
+      });
 
-      const results = sorted.map((e, i: number) =>
-        `${i + 1}. ${e.name} (${e.entity_type}) — ${e.mention_count} mention${
-          e.mention_count === 1 ? "" : "s"
-        }`
-      );
-
-      return `${sorted.length} entit${sorted.length === 1 ? "y" : "ies"}:\n\n${
+      return `${data.length} entit${data.length === 1 ? "y" : "ies"}:\n\n${
         results.join("\n")
       }`;
     }),
@@ -228,28 +205,22 @@ export function registerEntitiesTools(
           >,
           i: number,
         ) => {
-          const started = new Date(s.started_at).toLocaleString();
-          const completed = s.completed_at
-            ? new Date(s.completed_at).toLocaleString()
-            : "—";
-          const dur = s.completed_at
-            ? `${
-              Math.round(
-                (new Date(s.completed_at).getTime() -
-                  new Date(s.started_at).getTime()) / 1000,
-              )
-            }s`
-            : "—";
-          const errLine = s.error_message
-            ? `\n   Error: ${s.error_message}`
-            : "";
-          return `${
-            i + 1
-          }. [${started}] ${s.source} (${s.sync_type}) — ${s.status}${errLine}\n   Processed: ${s.records_processed} | Imported: ${s.records_imported} | Skipped: ${s.records_skipped} | Failed: ${s.records_failed}\n   Duration: ${dur} | Completed: ${completed}`;
+          const lines = [
+            `${i + 1}. [${s.source}] ${s.sync_type || "sync"} — ${s.status}`,
+            `   Started: ${new Date(s.started_at).toISOString()}`,
+            s.completed_at
+              ? `   Completed: ${new Date(s.completed_at).toISOString()}`
+              : null,
+            `   Processed: ${s.records_processed}, Imported: ${s.records_imported}, Skipped: ${s.records_skipped}, Failed: ${s.records_failed}`,
+            s.error_message ? `   Error: ${s.error_message}` : null,
+          ].filter(Boolean);
+          return lines.join("\n");
         },
       );
 
-      return `${data.length} sync(s):\n\n${results.join("\n\n")}`;
+      return `${data.length} sync log entr${
+        data.length === 1 ? "y" : "ies"
+      }:\n\n${results.join("\n\n")}`;
     }),
   );
 }
